@@ -20,11 +20,12 @@ from yield_entry_study import entries
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, forward_dividend_eps
 
 
-def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same_day"):
+def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same_day", open_check=False):
     """add_mode：same_day＝跌到門檻當天須同時出現加碼訊號；
                  armed＝收盤曾跌到門檻即觸發，之後任何一天出現加碼訊號就加碼（股價回升也照加）；
                  armed_below_first＝同 armed，但股價已漲回首次買價以上就不加。
-                 （「反彈回門檻之上就不加」等同 same_day：訊號當天收盤仍須在門檻之下。）"""
+                 （「反彈回門檻之上就不加」等同 same_day：訊號當天收盤仍須在門檻之下。）
+    open_check：隔天開盤價若已高於這次加碼的門檻價（首買價 × (1+門檻)），這次不加，資格保留。"""
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     o, c, lo, hi = df["open"].values, df["close"].values, df["low"].values, df["high"].values
     buy, add_trigger = buy.fillna(False).values, add_trigger.fillna(False).values
@@ -62,7 +63,8 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
                         (add_mode == "same_day" and pos["adds"] < MAX_ADDS
                          and c[p] / pos["first"] - 1 <= ADD_STEPS[pos["adds"]])
                         or (add_mode == "armed" and pos["adds"] < pos["hit"])
-                        or (add_mode == "armed_below_first" and pos["adds"] < pos["hit"] and c[p] < pos["first"])):
+                        or (add_mode == "armed_below_first" and pos["adds"] < pos["hit"] and c[p] < pos["first"])) \
+                        and not (open_check and o[i] > pos["first"] * (1 + ADD_STEPS[pos["adds"]])):
                     amount = ADD[pos["adds"]] if isinstance(ADD, (tuple, list)) else ADD
                     invest = min(cash, pos["base"] * amount)
                     pos["shares"] += invest * (1 - BUY_COST) / o[i]

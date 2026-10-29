@@ -7,6 +7,8 @@
   每檔額度 = 進場當時總資產 / 5；首次買額度的 40%，下跌 10/20/30% 且爆量下影線/長紅各加碼 20%
   收盤較平均成本獲利 >= 20% → 隔天開盤全部賣出；不停損
 同一天有多檔訊號而空位不夠：依預估殖利率高到低挑選。
+閒置現金加碼（idle_cash=True 時）：持股滿 5 檔時，觸發加碼的那一檔除了原本 20% 額度，
+  再多投入「閒置現金 / 持有檔數」；閒置現金 = 現金 − 各檔尚未用掉的加碼額度。
 預估股利（適用年配、半年配、季配）：
   - 若該股過去每年只配一次，且下一次股利已公告未除息 → 用公告值
   - 否則 = 最近四季 EPS × 近 3 個已知年度平均配息率
@@ -137,8 +139,8 @@ def prepare(stock_ids, dates):
 
 # ---------- 回測 ----------
 
-def run(data, member, dates):
-    cash, positions, trades, equity = 1.0, {}, [], []
+def run(data, member, dates, idle_cash=False):
+    cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     for n in range(1, len(dates)):
         t, p = dates[n], dates[n - 1]
         value_prev = cash + sum(pos["shares"] * data[s]["df"].at[p, "close"] for s, pos in positions.items()
@@ -164,7 +166,11 @@ def run(data, member, dates):
             pos["removed"] |= not in_index
             if (pos["adds"] < len(ADD_STEPS) and d["add"].at[p]
                     and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["adds"]]):
-                invest = min(cash, pos["budget"] * ADD)
+                invest = pos["budget"] * ADD
+                if idle_cash and len(positions) >= MAX_SLOTS:
+                    reserved = sum(q["budget"] * ADD * (len(ADD_STEPS) - q["adds"]) for q in positions.values())
+                    invest += max(cash - reserved, 0) / len(positions)
+                invest = min(cash, invest)
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -194,13 +200,16 @@ def run(data, member, dates):
             last = df["close"].loc[:t].dropna()
             value += pos["shares"] * (last.iloc[-1] if len(last) else pos["first"])
         equity.append(value)
+        exposure.append(1 - cash / value if value > 0 else 0.0)
     for sid, pos in positions.items():
         last = data[sid]["df"]["close"].dropna().iloc[-1]
         trades.append({"代號": sid, "進場": pos["start"], "出場": None, "加碼": pos["adds"], "被踢出": pos["removed"],
                        "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
                        "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - pos["start"]).days})
     cols = ["代號", "進場", "出場", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日"]
-    return pd.DataFrame(trades, columns=cols), pd.Series(equity, index=dates[1:])
+    eq = pd.Series(equity, index=dates[1:])
+    eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
+    return pd.DataFrame(trades, columns=cols), eq
 
 
 def stats(equity):
@@ -221,17 +230,20 @@ def main():
         print("缺資料略過：", ", ".join(skipped))
 
     rows, equities, all_trades = {}, {}, {}
-    for uname, etfs in universes.items():
+    runs = [(u, e, idle) for u, e in universes.items() for idle in (False, True)]
+    for uname, etfs, idle in runs:
         member = membership(constituents[constituents["etf"].astype(str).isin(etfs)], dates)
         sub = {k: v for k, v in data.items() if k in member}
-        trades, equity = run(sub, member, dates)
+        trades, equity = run(sub, member, dates, idle_cash=idle)
+        uname = f"{uname}{'（閒置現金加碼）' if idle else ''}"
         closed = trades[trades["出場"].notna()]
         rows[uname] = stats(equity) | {
             "股票池": len(sub), "筆數": len(trades), "已結案": len(closed),
             "勝率%": 100 * (closed["報酬%"] > 0).mean() if len(closed) else np.nan,
             "每筆平均%": closed["報酬%"].mean(), "最差一筆%": closed["報酬%"].min(),
             "最深套牢%": trades["最深套牢%"].min(), "最長持有日": trades["持有日"].max(),
-            "被踢出的部位": int(trades["被踢出"].sum()), "持有中": len(trades) - len(closed)}
+            "被踢出的部位": int(trades["被踢出"].sum()), "持有中": len(trades) - len(closed),
+            "資金使用率%": equity.attrs["資金使用率%"]}
         equities[uname] = equity
         all_trades[uname] = trades
         trades.to_csv(RESULTS / f"portfolio_trades_{uname}.csv", index=False, encoding="utf-8-sig")
@@ -239,6 +251,7 @@ def main():
         loaded = load_prices(etf)
         if loaded:
             px = loaded[0]["close"].reindex(equities["0050＋0056"].index).ffill().dropna()
+            px = px / px.iloc[0]
             rows[f"{etf} 買進持有"] = stats(px)
             equities[f"{etf} 買進持有"] = px
     table = pd.DataFrame(rows).T

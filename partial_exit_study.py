@@ -3,13 +3,18 @@
 階段一（同 yield_study）：首次 40% 資金，下跌 10/20/30% 且爆量下影線/長紅時各加碼 20%。
 階段二：收盤較平均成本獲利 >= 15% → 隔天開盤賣出一半。
 階段三（剩下一半）：
-  出場規則（三選一比較）：
-    MA20：收盤跌破 20 日均線
-    超買：4 指標中 >= 3 個超買且 KD 死叉
-    MACD：MACD 死叉
+  出場與順勢加碼各用三套判斷（爆量 = 成交量 > 1.5 倍 20 日均量）：
+    價量＋引線：
+      出場 = 爆量長上影線、爆量長黑、或價創 20 日新高但量縮
+      加碼 = 爆量長紅 或 爆量長下影線
+    布林＋KD：
+      出場 = 高檔區（近 5 日觸上軌且 K>70）KD 死叉，或收盤跌破布林中軌
+      加碼 = 收盤在中軌之上且 KD 金叉
+    混合（布林＋KD 判斷位置，價量＋引線決定時機）：
+      出場 = 高檔區內出現價量＋引線出場訊號，或收盤跌破布林中軌
+      加碼 = 收盤在中軌之上且 K>D 時，出現價量＋引線加碼訊號
   保本：收盤跌回平均成本以下 → 全部賣出
-  順勢加碼（可選，一次）：收盤在 MA20 之上、DIF > DEA，且出現爆量長紅
-                          → 把賣一半拿回的錢再買回去
+  順勢加碼最多一次，把賣一半拿回的錢再買回去
 所有動作皆收盤判斷、隔天開盤執行。
 
 用法：python partial_exit_study.py [代號]
@@ -21,8 +26,7 @@ import pandas as pd
 
 from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
 from final_strategy import signals
-from indicators import cross_down, macd, pv_triggers, sma
-from meanrev_study import resonance
+from indicators import bollinger, cross_down, cross_up, kd, pv_triggers, setup_zones
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, TAKE_PROFIT, forward_dividend_eps
 
 
@@ -120,34 +124,45 @@ def main(stock_id="2382"):
     add = t["wick_buy"] | t["pv_buy"]
     start = df.index[0] + pd.Timedelta(days=int(WARMUP * 365.25 / 245))
 
-    ma20 = sma(df["close"], 20)
-    dif, dea = macd(df["close"])
-    exits = {"MA20": df["close"] < ma20, "超買": resonance(df, "標準", 3, 3)[1], "MACD": cross_down(dif, dea)}
-    pyramid = (df["close"] > ma20) & (dif > dea) & t["pv_buy"]
-    never = pd.Series(False, index=df.index)
+    _, mid, _ = bollinger(df)
+    k, d = kd(df)
+    _, high_zone, *_ = setup_zones(df)
+    pv_sell = t["wick_sell"] | t["pv_sell"]
+    pv_buy = t["wick_buy"] | t["pv_buy"]
+    below_mid = df["close"] < mid
+    exits = {
+        "價量引線": pv_sell,
+        "布林KD": (high_zone & cross_down(k, d)) | below_mid,
+        "混合": (high_zone & pv_sell) | below_mid,
+    }
+    adds = {
+        "不加碼": None,
+        "價量引線加碼": pv_buy,
+        "布林KD加碼": (df["close"] > mid) & cross_up(k, d),
+        "混合加碼": (df["close"] > mid) & (k > d) & pv_buy,
+    }
 
     rows, details = {}, {}
-    # 基準：獲利 15% 全部賣出（等同剩下一半在賣一半的隔天就出場）
+    # 基準：獲利 15% 全部賣出
     from yield_study import run_multi, summary as base_summary
     tr, eq = run_multi(df, buy, add, start, df.index[-1])
     s = base_summary(tr, eq)
-    rows["基準：獲利15%全賣"] = {"筆數": s["筆數"], "已結案": s["已結案"], "勝率%": s["勝率%"], "每筆平均%": s["每筆平均%"],
-                           "最好一筆%": tr["報酬%"].max(), "最差一筆%": tr["報酬%"].min(), "順勢加碼次數": 0,
-                           "平均持有日": tr["持有日"].mean(), "年化%": s["年化%"], "最大回撤%": s["最大回撤%"]}
+    rows[("基準", "獲利15%全賣")] = {"筆數": s["筆數"], "已結案": s["已結案"], "勝率%": s["勝率%"], "每筆平均%": s["每筆平均%"],
+                                 "最好一筆%": tr["報酬%"].max(), "最差一筆%": tr["報酬%"].min(), "順勢加碼次數": 0,
+                                 "平均持有日": tr["持有日"].mean(), "年化%": s["年化%"], "最大回撤%": s["最大回撤%"]}
     for ename, ex in exits.items():
-        for pname, pyr in (("不加碼", None), ("順勢加碼", pyramid)):
-            name = f"賣一半＋{ename}出場＋{pname}"
+        for aname, pyr in adds.items():
             tr, eq = run(df, buy, add, ex, pyr, start, df.index[-1])
-            rows[name] = summary(tr, eq)
-            details[name] = tr
-            tr.to_csv(ROOT / "results" / f"{stock_id}_partial_{ename}_{pname}.csv", index=False, encoding="utf-8-sig")
+            rows[(f"出場:{ename}", aname)] = summary(tr, eq)
+            details[(ename, aname)] = tr
+            tr.to_csv(ROOT / "results" / f"{stock_id}_partial_{ename}_{aname}.csv", index=False, encoding="utf-8-sig")
     table = pd.DataFrame(rows).T
     table.round(2).to_csv(ROOT / "results" / f"{stock_id}_partial_exit_summary.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
-        best = table.drop("基準：獲利15%全賣")["年化%"].idxmax()
-        print(f"【{best} 交易明細】")
-        print(details[best].round(1).to_string())
+        for key in (("價量引線", "不加碼"), ("價量引線", "價量引線加碼"), ("混合", "混合加碼")):
+            print(f"【出場:{key[0]}＋{key[1]} 交易明細】")
+            print(details[key].round(1).to_string(), "\n")
 
 
 if __name__ == "__main__":

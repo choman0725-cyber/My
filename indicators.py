@@ -106,16 +106,24 @@ def b2_rsi(df):
     return cross_up(r, pd.Series(30, index=df.index)), cross_down(r, pd.Series(70, index=df.index))
 
 
-def b3_williams(df, n=14):
+def williams_r(df, n=14):
     high_n, low_n = df["high"].rolling(n).max(), df["low"].rolling(n).min()
-    wr = (high_n - df["close"]) / (high_n - low_n) * -100
+    return (high_n - df["close"]) / (high_n - low_n) * -100
+
+
+def cci_line(df, n=20):
+    tp = (df["high"] + df["low"] + df["close"]) / 3
+    mad = tp.rolling(n).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    return (tp - sma(tp, n)) / (0.015 * mad)
+
+
+def b3_williams(df, n=14):
+    wr = williams_r(df, n)
     return cross_up(wr, pd.Series(-80, index=df.index)), cross_down(wr, pd.Series(-20, index=df.index))
 
 
 def b4_cci(df, n=20):
-    tp = (df["high"] + df["low"] + df["close"]) / 3
-    mad = tp.rolling(n).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    cci = (tp - sma(tp, n)) / (0.015 * mad)
+    cci = cci_line(df, n)
     return cross_up(cci, pd.Series(-100, index=df.index)), cross_down(cci, pd.Series(100, index=df.index))
 
 

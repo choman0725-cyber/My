@@ -1,7 +1,7 @@
 """多股票組合回測：0050 ＋ 0056 歷年成分股，套用 A 版邏輯，最多同時持有 5 檔（只做多）。
 
 選股範圍：每天只看「當天」屬於 0050 或 0056 成分股的股票（依 data/universe/constituents.csv 的生效日）。
-被踢出成分股：不再新進場、也不再加碼；已持有的部位照原邏輯出場（獲利 20% 賣出）。
+被踢出成分股：不再新進場；已持有的部位照原邏輯加碼與出場（獲利 20% 賣出）。
 單檔邏輯（同 strategy_a.py）：
   預估殖利率 >= 5%（EPS 法）＋ 技術買點任一 → 隔天開盤買進
   每檔額度 = 進場當時總資產 / 5；首次買額度的 40%，下跌 10/20/30% 且爆量下影線/長紅各加碼 20%
@@ -161,7 +161,7 @@ def run(data, member, dates):
                 continue
             in_index = member.get(sid, pd.Series(False, index=dates)).at[p]
             pos["removed"] |= not in_index
-            if (in_index and pos["adds"] < len(ADD_STEPS) and d["add"].at[p]
+            if (pos["adds"] < len(ADD_STEPS) and d["add"].at[p]
                     and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["adds"]]):
                 invest = min(cash, pos["budget"] * ADD)
                 if invest > 0:

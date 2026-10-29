@@ -20,7 +20,9 @@ from yield_entry_study import entries
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, forward_dividend_eps
 
 
-def run(df, buy, add_trigger, start, end, target, tech_exit=None):
+def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same_day"):
+    """add_mode：same_day＝跌到門檻當天須同時出現加碼訊號；
+                 armed＝收盤曾跌到門檻即觸發，之後任何一天出現加碼訊號就加碼（股價回升也照加）。"""
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     o, c, lo, hi = df["open"].values, df["close"].values, df["low"].values, df["high"].values
     buy, add_trigger = buy.fillna(False).values, add_trigger.fillna(False).values
@@ -34,7 +36,7 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None):
                     base = cash
                     invest = base * FIRST
                     pos = {"start": i, "first": o[i], "shares": invest * (1 - BUY_COST) / o[i], "cost": invest,
-                           "base": base, "adds": 0, "low": o[i], "peak": 0.0, "armed": None}
+                           "base": base, "adds": 0, "low": o[i], "peak": 0.0, "armed": None, "hit": 0}
                     cash -= invest
             else:
                 gain = c[p] / (pos["cost"] / pos["shares"]) - 1
@@ -54,14 +56,18 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None):
                                    "持有日": i - pos["start"]})
                     cash += proceeds
                     pos = None
-                elif (pos["armed"] is None and pos["adds"] < MAX_ADDS and add_trigger[p]
-                      and c[p] / pos["first"] - 1 <= ADD_STEPS[pos["adds"]]):
+                elif pos["armed"] is None and add_trigger[p] and (
+                        (add_mode == "same_day" and pos["adds"] < MAX_ADDS
+                         and c[p] / pos["first"] - 1 <= ADD_STEPS[pos["adds"]])
+                        or (add_mode == "armed" and pos["adds"] < pos["hit"])):
                     invest = min(cash, pos["base"] * ADD)
                     pos["shares"] += invest * (1 - BUY_COST) / o[i]
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest
         if pos is not None:
+            while pos["hit"] < MAX_ADDS and c[i] / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
+                pos["hit"] += 1
             pos["low"] = min(pos["low"], lo[i])
             pos["peak"] = max(pos["peak"], hi[i] / (pos["cost"] / pos["shares"]) - 1)
         equity.append(cash + (pos["shares"] * c[i] if pos else 0.0))

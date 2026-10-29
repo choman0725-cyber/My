@@ -14,6 +14,7 @@
 資料：data/universe/ 下的 constituents.csv、prices/<代號>.csv、eps_all.csv、dividend_all.csv
 價格：預設用還原價（含現金股利）；PRICE_MODE=raw 用原始價。
 
+會分別跑三種選股範圍：0050＋0056、只看 0050、只看 0056。
 用法：python portfolio_study.py
 """
 import sys
@@ -212,35 +213,44 @@ def main():
     constituents = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= START - pd.Timedelta(days=5)]).sort_values()
-    member = membership(constituents, dates)
-    data, skipped = prepare(sorted(member), dates)
+    universes = {"0050＋0056": ("0050", "0056"), "只看0050": ("0050",), "只看0056": ("0056",)}
+    all_ids = sorted(constituents["stock_id"].unique())
+    data, skipped = prepare(all_ids, dates)
     if skipped:
         print("缺資料略過：", ", ".join(skipped))
-    trades, equity = run(data, member, dates)
 
-    rows = {"策略（最多 5 檔）": stats(equity)}
-    closed = trades[trades["出場"].notna()]
-    rows["策略（最多 5 檔）"] |= {"筆數": len(trades), "已結案": len(closed),
-                            "勝率%": 100 * (closed["報酬%"] > 0).mean() if len(closed) else np.nan,
-                            "每筆平均%": closed["報酬%"].mean(), "最深套牢%": trades["最深套牢%"].min(),
-                            "最長持有日": trades["持有日"].max(), "被踢出後才出場": int(closed["被踢出"].sum())}
+    rows, equities, all_trades = {}, {}, {}
+    for uname, etfs in universes.items():
+        member = membership(constituents[constituents["etf"].astype(str).isin(etfs)], dates)
+        sub = {k: v for k, v in data.items() if k in member}
+        trades, equity = run(sub, member, dates)
+        closed = trades[trades["出場"].notna()]
+        rows[uname] = stats(equity) | {
+            "股票池": len(sub), "筆數": len(trades), "已結案": len(closed),
+            "勝率%": 100 * (closed["報酬%"] > 0).mean() if len(closed) else np.nan,
+            "每筆平均%": closed["報酬%"].mean(), "最差一筆%": closed["報酬%"].min(),
+            "最深套牢%": trades["最深套牢%"].min(), "最長持有日": trades["持有日"].max(),
+            "被踢出的部位": int(trades["被踢出"].sum()), "持有中": len(trades) - len(closed)}
+        equities[uname] = equity
+        all_trades[uname] = trades
+        trades.to_csv(RESULTS / f"portfolio_trades_{uname}.csv", index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):
         loaded = load_prices(etf)
         if loaded:
-            px = loaded[0]["close"].reindex(equity.index).ffill().dropna()
+            px = loaded[0]["close"].reindex(equities["0050＋0056"].index).ffill().dropna()
             rows[f"{etf} 買進持有"] = stats(px)
+            equities[f"{etf} 買進持有"] = px
     table = pd.DataFrame(rows).T
     RESULTS.mkdir(exist_ok=True)
-    trades.to_csv(RESULTS / "portfolio_trades.csv", index=False, encoding="utf-8-sig")
-    equity.to_csv(RESULTS / "portfolio_equity.csv", encoding="utf-8-sig")
     table.to_csv(RESULTS / "portfolio_summary.csv", encoding="utf-8-sig")
-    yearly = pd.DataFrame({k: v for k, v in [("策略", equity)] + [
-        (f"{e}", load_prices(e)[0]["close"].reindex(equity.index).ffill()) for e in ("0050", "0056") if load_prices(e)]})
-    yearly = yearly.groupby(yearly.index.year).last().pct_change() * 100
-    with pd.option_context("display.width", 250, "display.max_rows", 200, "display.unicode.east_asian_width", True):
+    curves = pd.DataFrame(equities)
+    curves.to_csv(RESULTS / "portfolio_equity.csv", encoding="utf-8-sig")
+    yearly = curves.groupby(curves.index.year).last().pct_change() * 100
+    with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         print("【每年報酬%】\n", yearly.round(1).to_string(), "\n")
-        print("【交易明細】\n", trades.round(1).to_string())
+        for uname, trades in all_trades.items():
+            print(f"【{uname} 交易明細】\n", trades.round(1).to_string(), "\n")
 
 
 if __name__ == "__main__":

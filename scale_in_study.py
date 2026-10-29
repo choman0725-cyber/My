@@ -5,7 +5,8 @@
 加碼（每筆最多一次）：收盤較首次進場價下跌 >= 10%，且當天出現
         爆量長下影線 或 爆量長紅（爆量 = 成交量 > 1.5 倍 20 日均量）
 出場：收盤價較平均成本獲利 >= 15% 全部賣出；
-      基本面停損：最近兩個已公布季度的季營收年增率都 < 0 → 全部賣出
+      基本面停損：最近兩個已公布季度的季營收年增率都 < 0 → 全部賣出，且期間內不進場
+      （「不擋進場」版本：照常進場，只有持有期間才轉為惡化時賣出）
       （月營收以次月 10 日公布計，季資料於該季最後一個月營收公布後才可用）
 所有動作皆為收盤判斷、隔天開盤執行。
 
@@ -43,7 +44,7 @@ def revenue_stop(df, stock_id):
     return flag.reindex(df.index.union(flag.index)).ffill().reindex(df.index).fillna(False).astype(bool)
 
 
-def run(df, buy, add_trigger, fundamental_stop, start, end):
+def run(df, buy, add_trigger, fundamental_stop, start, end, block_entry=True):
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     o, c, lo = df["open"].values, df["close"].values, df["low"].values
     buy, add_trigger = buy.fillna(False).values, add_trigger.fillna(False).values
@@ -53,14 +54,16 @@ def run(df, buy, add_trigger, fundamental_stop, start, end):
     for n, i in enumerate(idx):
         if n > 0:
             p = idx[n - 1]
-            if pos is None and buy[p] and not stop[p]:
+            if pos is None and buy[p] and not (block_entry and stop[p]):
                 invest = cash * FIRST
                 pos = {"start": i, "first_price": o[i], "shares": invest * (1 - BUY_COST) / o[i],
                        "cost": invest, "added": None, "low": o[i]}
                 cash -= invest
             elif pos is not None:
                 avg = pos["cost"] / pos["shares"]
-                reason = "停利" if c[p] / avg - 1 >= TAKE_PROFIT else "基本面停損" if stop[p] else None
+                # 只有進場後才「轉為」惡化才停損（進場時已惡化則不觸發）
+                newly_bad = stop[p] and not stop[pos["start"] - 1]
+                reason = "停利" if c[p] / avg - 1 >= TAKE_PROFIT else "基本面停損" if (stop[p] if block_entry else newly_bad) else None
                 if reason:
                     proceeds = pos["shares"] * o[i] * (1 - SELL_COST)
                     trades.append({"進場": df.index[pos["start"]], "出場": df.index[i], "原因": reason,
@@ -104,11 +107,12 @@ def main(stock_id="2382"):
     never = pd.Series(False, index=df.index)
 
     rows, detail = {}, None
-    for name, add, stop in [("不加碼、不停損", never, None), ("加碼、不停損", add_trigger, None),
-                            ("不加碼、基本面停損", never, fstop), ("加碼＋基本面停損", add_trigger, fstop)]:
+    for name, add, stop, block in [("不加碼、不停損", never, None, True), ("加碼、不停損", add_trigger, None, True),
+                                   ("不加碼、基本面停損", never, fstop, True), ("加碼＋基本面停損", add_trigger, fstop, True),
+                                   ("加碼＋基本面停損（不擋進場）", add_trigger, fstop, False)]:
         if stop is None and "基本面" in name:
             continue
-        trades, equity = run(df, buy, add, stop, start, df.index[-1])
+        trades, equity = run(df, buy, add, stop, start, df.index[-1], block)
         rows[name] = summary(trades, equity)
         trades.to_csv(ROOT / "results" / f"{stock_id}_scale_in_{name}.csv", index=False, encoding="utf-8-sig")
         detail = trades

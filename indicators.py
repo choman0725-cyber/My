@@ -295,3 +295,68 @@ MACD_KD_STRATEGIES = {
     "G3 DIF>0＋KD<50 金叉買／MACD 死叉賣": g3_zero_line_pullback,
     "G4 雙重確認買／任一轉弱賣": g4_double_confirm,
 }
+
+
+# ---------- 策略：H KD 看方向 × MACD 看買點 ----------
+
+def weekly_kd(df, n=9):
+    """週 KD，只使用已收完的週線（換到日線時延後一週，避免偷看未來）。"""
+    w = df.resample("W-FRI").agg({"open": "first", "high": "max", "low": "min", "close": "last"}).dropna()
+    k, d = kd(w, n)
+    k = k.shift(1).reindex(df.index, method="ffill")
+    d = d.shift(1).reindex(df.index, method="ffill")
+    return k, d
+
+
+def h1_kd_dir_macd_entry(df):
+    """K > D（KD 偏多）時 MACD 金叉買；KD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    return cross_up(dif, dea) & (k > d), cross_down(k, d)
+
+
+def h2_kd_dir_macd_exit(df):
+    """K > D 時 MACD 金叉買；MACD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    return cross_up(dif, dea) & (k > d), cross_down(dif, dea)
+
+
+def h3_kd_zone(df):
+    """K > 50（KD 多方區）時 MACD 金叉買；K 跌破 50 賣。"""
+    dif, dea = macd(df["close"])
+    k, _ = kd(df)
+    fifty = pd.Series(50, index=df.index)
+    return cross_up(dif, dea) & (k > 50), cross_down(k, fifty)
+
+
+def h4_kd_zone_macd_exit(df):
+    """K > 50 時 MACD 金叉買；MACD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    k, _ = kd(df)
+    return cross_up(dif, dea) & (k > 50), cross_down(dif, dea)
+
+
+def h5_weekly_kd(df):
+    """週 K > 週 D（週線偏多）時日 MACD 金叉買；週 KD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    wk, wd = weekly_kd(df)
+    return cross_up(dif, dea) & (wk > wd), cross_down(wk, wd)
+
+
+def h6_weekly_kd_macd_exit(df):
+    """週 K > 週 D 時日 MACD 金叉買；日 MACD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    wk, wd = weekly_kd(df)
+    return cross_up(dif, dea) & (wk > wd), cross_down(dif, dea)
+
+
+KD_MACD_STRATEGIES = {
+    "A3 MACD 交叉（單獨）": a3_macd,
+    "H1 K>D＋MACD 金叉買／KD 死叉賣": h1_kd_dir_macd_entry,
+    "H2 K>D＋MACD 金叉買／MACD 死叉賣": h2_kd_dir_macd_exit,
+    "H3 K>50＋MACD 金叉買／K 跌破 50 賣": h3_kd_zone,
+    "H4 K>50＋MACD 金叉買／MACD 死叉賣": h4_kd_zone_macd_exit,
+    "H5 週KD偏多＋日MACD 金叉買／週KD 死叉賣": h5_weekly_kd,
+    "H6 週KD偏多＋日MACD 金叉買／日MACD 死叉賣": h6_weekly_kd_macd_exit,
+}

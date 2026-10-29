@@ -27,6 +27,7 @@
 用法：python portfolio_study.py
 """
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -70,13 +71,26 @@ def eps_table(eps_all, stock_id):
     return e.reset_index(drop=True)
 
 
-def dividend_events(div_all, stock_id):
+def dividend_events(div_all, stock_id, res_all=None):
     d = div_all[div_all["stock_id"].astype(str) == stock_id].copy()
     if d.empty:
-        return d
-    d["fy"] = d["year"].astype(str).str.extract(r"(\d+)")[0].astype(int) + 1911
+        # 股利政策缺漏：用除權息結果補（視為年配，除息日當天才得知、所屬年度 = 除息年 - 1）
+        if res_all is None:
+            return d
+        r = res_all[(res_all["stock_id"].astype(str) == stock_id)
+                    & (res_all["stock_or_cache_dividend"].astype(str).str.contains("息"))].copy()
+        if r.empty:
+            return pd.DataFrame(columns=["fy", "cash", "announced", "ex_date"])
+        r["date"] = pd.to_datetime(r["date"])
+        return pd.DataFrame({"fy": r["date"].dt.year - 1, "cash": r["stock_and_cache_dividend"],
+                             "announced": r["date"], "ex_date": r["date"]}).sort_values("announced").reset_index(drop=True)
     d["cash"] = d["CashEarningsDistribution"].fillna(0) + d["CashStatutorySurplus"].fillna(0)
     d["announced"] = pd.to_datetime(d["AnnouncementDate"], errors="coerce")
+    # 年度欄位為「不適用」等（多為資本公積發放）時，以公告年 - 1 視為所屬年度
+    roc = pd.to_numeric(d["year"].astype(str).str.extract(r"(\d+)")[0], errors="coerce")
+    d["fy"] = (roc + 1911).fillna(d["announced"].dt.year - 1)
+    d = d.dropna(subset=["fy"])
+    d["fy"] = d["fy"].astype(int)
     d["ex_date"] = pd.to_datetime(d["CashExDividendTradingDate"], errors="coerce")
     d = d[d["cash"] > 0].dropna(subset=["announced"])
     return d[["fy", "cash", "announced", "ex_date"]].sort_values("announced").reset_index(drop=True)
@@ -129,6 +143,7 @@ def membership(constituents, dates):
 def prepare(stock_ids, dates):
     eps_all = pd.read_csv(UNI / "eps_all.csv")
     div_all = pd.read_csv(UNI / "dividend_all.csv")
+    res_all = pd.read_csv(UNI / "dividend_result_all.csv")
     data, skipped = {}, []
     for sid in stock_ids:
         loaded = load_prices(sid)
@@ -136,13 +151,20 @@ def prepare(stock_ids, dates):
             skipped.append(sid)
             continue
         df, raw_close = loaded
-        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid))
+        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
         sigs, add = entries(df)
+        d = df.reindex(dates)
+        last = d["close"].last_valid_index()
+        # 最後交易日比資料最後一天早 10 天以上才視為下市（避免各檔資料最後更新日不同被誤判）
+        delisted = last is not None and last < dates[-1] - pd.Timedelta(days=10)
         data[sid] = {
-            "df": df.reindex(dates),
-            "buy": (sigs["任一"] & (100 * dps / raw_close >= MIN_YIELD)).reindex(dates, fill_value=False),
-            "add": add.reindex(dates, fill_value=False).fillna(False),
-            "yield": (100 * dps / raw_close).reindex(dates),
+            "df": d,
+            "open": d["open"].values, "close": d["close"].values, "low": d["low"].values,
+            "close_ff": d["close"].ffill().values,
+            "last_n": dates.get_loc(last) if delisted else len(dates) + 1,
+            "buy": (sigs["任一"] & (100 * dps / raw_close >= MIN_YIELD)).reindex(dates).fillna(False).astype(bool).values,
+            "add": add.reindex(dates).fillna(False).astype(bool).values,
+            "yield": (100 * dps / raw_close).reindex(dates).values,
         }
     return data, skipped
 
@@ -155,35 +177,43 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
       invested ：已投入股票市值 + 新部位首買金額 <= 總資產 × target_util（剩下現金給加碼，先到先用）
-    first：首買占單檔額度（總資產/5）的比例。"""
+    first：首買占單檔額度（總資產/5）的比例。
+    股票下市／合併後沒有價格：在最後交易日的隔天，以最後收盤價結算出場（原因記為「下市結算」）。"""
+    mem = {k: v.values for k, v in member.items()}
+    no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
+
+    def close_out(sid, n, price, reason):
+        nonlocal cash
+        pos = positions.pop(sid)
+        proceeds = pos["shares"] * price * (1 - SELL_COST)
+        cash += proceeds
+        trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": reason, "加碼": pos["adds"],
+                       "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
+                       "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[n] - dates[pos["start"]]).days})
+
     for n in range(1, len(dates)):
-        t, p = dates[n], dates[n - 1]
-        value_prev = cash + sum(pos["shares"] * data[s]["df"].at[p, "close"] for s, pos in positions.items()
-                                if pd.notna(data[s]["df"].at[p, "close"]))
-        # 出場與加碼（當天賣出的股票，當天不再買回）
+        p = n - 1
+        value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
         for sid in list(positions):
             pos, d = positions[sid], data[sid]
-            o, c_prev = d["df"].at[t, "open"], d["df"].at[p, "close"]
-            if pd.isna(o) or pd.isna(c_prev):
-                continue
-            avg = pos["cost"] / pos["shares"]
-            if c_prev / avg - 1 >= TARGET:
-                proceeds = pos["shares"] * o * (1 - SELL_COST)
-                cash += proceeds
-                trades.append({"代號": sid, "進場": pos["start"], "出場": t, "加碼": pos["adds"],
-                               "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
-                               "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (t - pos["start"]).days})
-                del positions[sid]
+            if p >= d["last_n"] and n > d["last_n"]:          # 已下市
+                close_out(sid, n, d["close_ff"][d["last_n"]], "下市結算")
                 sold_today.add(sid)
                 continue
-            in_index = member.get(sid, pd.Series(False, index=dates)).at[p]
-            pos["removed"] |= not in_index
+            o, c_prev = d["open"][n], d["close"][p]
+            if np.isnan(o) or np.isnan(c_prev):
+                continue
+            if c_prev / (pos["cost"] / pos["shares"]) - 1 >= TARGET:
+                close_out(sid, n, o, "停利")
+                sold_today.add(sid)
+                continue
+            pos["removed"] |= not mem.get(sid, no)[p]
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
-            if pos["adds"] < pos["hit"] and d["add"].at[p] and c_prev < pos["first"]:
+            if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"]:
                 invest = pos["budget"] * ADDS[pos["adds"]]
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
@@ -194,21 +224,19 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest
-        # 新進場
         free = MAX_SLOTS - len(positions)
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0
         if free > 0:
-            cands = [(data[s]["yield"].at[p], s) for s in data
-                     if s not in positions and s not in sold_today and member.get(s, pd.Series(False, index=dates)).at[p]
-                     and data[s]["buy"].at[p] and pd.notna(data[s]["df"].at[t, "open"])]
+            cands = [(data[s_]["yield"][p], s_) for s_ in data
+                     if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p]
+                     and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
             for _, sid in sorted(cands, reverse=True)[:free]:
                 budget = value_prev / MAX_SLOTS
                 invest = min(cash, budget * first)
                 if target_util is not None and util_mode == "committed":
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     committed = (value_prev - cash) + reserved
-                    # 新部位會占用首買 + 自己的加碼額度
                     if committed + budget > target_util * value_prev or cash - reserved < invest:
                         break
                 if target_util is not None and util_mode == "invested":
@@ -216,27 +244,25 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         break
                 if invest <= 0:
                     break
-                o = data[sid]["df"].at[t, "open"]
-                positions[sid] = {"start": t, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
+                o = data[sid]["open"][n]
+                positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False}
                 cash -= invest
                 last_buy_n = n
-        # 每日市值
         value = cash
         for sid, pos in positions.items():
-            df = data[sid]["df"]
-            if pd.notna(df.at[t, "low"]):
-                pos["low"] = min(pos["low"], df.at[t, "low"])
-            last = df["close"].loc[:t].dropna()
-            value += pos["shares"] * (last.iloc[-1] if len(last) else pos["first"])
+            d = data[sid]
+            if not np.isnan(d["low"][n]):
+                pos["low"] = min(pos["low"], d["low"][n])
+            value += pos["shares"] * d["close_ff"][n]
         equity.append(value)
         exposure.append(1 - cash / value if value > 0 else 0.0)
     for sid, pos in positions.items():
-        last = data[sid]["df"]["close"].dropna().iloc[-1]
-        trades.append({"代號": sid, "進場": pos["start"], "出場": None, "加碼": pos["adds"], "被踢出": pos["removed"],
-                       "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
-                       "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - pos["start"]).days})
-    cols = ["代號", "進場", "出場", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日"]
+        last = data[sid]["close_ff"][-1]
+        trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": None, "原因": "持有中", "加碼": pos["adds"],
+                       "被踢出": pos["removed"], "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
+                       "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - dates[pos["start"]]).days})
+    cols = ["代號", "進場", "出場", "原因", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日"]
     eq = pd.Series(equity, index=dates[1:])
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
     return pd.DataFrame(trades, columns=cols), eq
@@ -255,7 +281,14 @@ def main():
     dates = pd.DatetimeIndex(cal[cal >= START - pd.Timedelta(days=5)]).sort_values()
     universes = {"0050＋0056": ("0050", "0056"), "只看0050": ("0050",), "只看0056": ("0056",)}
     all_ids = sorted(constituents["stock_id"].unique())
-    data, skipped = prepare(all_ids, dates)
+    import pickle
+    cache = RESULTS / "portfolio_prepared.pkl"
+    if cache.exists() and cache.stat().st_mtime > max(f.stat().st_mtime for f in UNI.rglob("*.csv")) \
+            and cache.stat().st_mtime > Path(__file__).stat().st_mtime:
+        data, skipped = pickle.loads(cache.read_bytes())
+    else:
+        data, skipped = prepare(all_ids, dates)
+        cache.write_bytes(pickle.dumps((data, skipped)))
     if skipped:
         print("缺資料略過：", ", ".join(skipped))
 

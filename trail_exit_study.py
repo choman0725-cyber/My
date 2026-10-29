@@ -20,12 +20,21 @@ from yield_entry_study import entries
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, forward_dividend_eps
 
 
-def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same_day", open_check=False):
+def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same_day", open_check=False,
+        scheme=None, fill="next_open"):
     """add_mode：same_day＝跌到門檻當天須同時出現加碼訊號；
                  armed＝收盤曾跌到門檻即觸發，之後任何一天出現加碼訊號就加碼（股價回升也照加）；
                  armed_below_first＝同 armed，但股價已漲回首次買價以上就不加。
                  （「反彈回門檻之上就不加」等同 same_day：訊號當天收盤仍須在門檻之下。）
-    open_check：隔天開盤價若已高於這次加碼的門檻價（首買價 × (1+門檻)），這次不加，資格保留。"""
+    open_check：隔天開盤價若已高於這次加碼的門檻價（首買價 × (1+門檻)），這次不加，資格保留。
+    scheme：(首買比例, 每次加碼比例或各次比例, 加碼門檻) 覆寫模組預設。
+    fill：next_open＝訊號隔天開盤成交；close＝訊號當天收盤價成交（盤後定價交易，假設都成交），
+          交易日期仍記在隔天。"""
+    FIRST, ADD, ADD_STEPS = scheme if scheme else (globals()["FIRST"], globals()["ADD"], globals()["ADD_STEPS"])
+    MAX_ADDS = len(ADD_STEPS)
+    if fill == "close":
+        df = df.copy()
+        df["open"] = df["close"].shift(1).fillna(df["open"])
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     o, c, lo, hi = df["open"].values, df["close"].values, df["low"].values, df["high"].values
     buy, add_trigger = buy.fillna(False).values, add_trigger.fillna(False).values

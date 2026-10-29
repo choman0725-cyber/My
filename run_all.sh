@@ -25,3 +25,4 @@ python3 wick_filter_study.py
 python3 compare_versions.py
 python3 final_strategy.py
 python3 strategy_a.py
+python3 fill_study.py

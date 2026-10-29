@@ -211,7 +211,7 @@ def wick_conditions(df, wick_ratio=0.5, vol_mult=1.5):
     """長下影線、長上影線、爆量、低檔、高檔等基本條件。
 
     長影線：影線占當日 K 棒全長 >= wick_ratio，且全長 >= 0.8 倍 ATR（排除小 K 棒）。
-    爆量：成交量 >= vol_mult 倍 20 日均量。
+    爆量：成交量 > vol_mult 倍 20 日均量。
     低檔：收盤 < MA20；高檔：收盤 > MA20。
     """
     upper, lower, rng = shadows(df)
@@ -220,7 +220,7 @@ def wick_conditions(df, wick_ratio=0.5, vol_mult=1.5):
     return {
         "long_lower": (lower >= wick_ratio * rng) & big_bar,
         "long_upper": (upper >= wick_ratio * rng) & big_bar,
-        "vol_up": df["volume"] >= vol_mult * sma(df["volume"], 20),
+        "vol_up": df["volume"] > vol_mult * sma(df["volume"], 20),
         "low_zone": df["close"] < ma20,
         "high_zone": df["close"] > ma20,
     }

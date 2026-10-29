@@ -491,3 +491,47 @@ ZONE_PV_STRATEGIES = {
     "J3 低檔區＋(下影線或長紅)買／高檔區＋(上影線或長黑/量縮)賣": j3_zone_both,
     "J4 順勢：中軌上K>D＋(長紅或下影線)買／高檔出貨訊號或破中軌賣": j4_trend_pv,
 }
+
+
+# ---------- 策略：L KD 判斷方向 × 價量／引線觸發買賣 ----------
+# 買進觸發 = 爆量長下影線 或 爆量長紅；賣出觸發 = 爆量長上影線、爆量長黑、價創高量縮
+
+def _triggers(df):
+    t = pv_triggers(df)
+    return t["wick_buy"] | t["pv_buy"], t["wick_sell"] | t["pv_sell"]
+
+
+def l1_daily_kd(df):
+    """日 K > D 時出現買進觸發就買；日 K < D 時出現賣出觸發就賣。"""
+    k, d = kd(df)
+    buy_t, sell_t = _triggers(df)
+    return (k > d) & buy_t, (k < d) & sell_t
+
+
+def l2_kd_fifty(df):
+    """日 K > 50 時買進觸發就買；日 K < 50 時賣出觸發就賣。"""
+    k, _ = kd(df)
+    buy_t, sell_t = _triggers(df)
+    return (k > 50) & buy_t, (k < 50) & sell_t
+
+
+def l3_weekly_kd(df):
+    """週 K > 週 D 時買進觸發就買；週 K < 週 D 時賣出觸發就賣。"""
+    wk, wd = weekly_kd(df)
+    buy_t, sell_t = _triggers(df)
+    return (wk > wd) & buy_t, (wk < wd) & sell_t
+
+
+def l4_weekly_kd_any_sell(df):
+    """週 K > 週 D 時買進觸發就買；任何賣出觸發或週 KD 死叉就賣。"""
+    wk, wd = weekly_kd(df)
+    buy_t, sell_t = _triggers(df)
+    return (wk > wd) & buy_t, sell_t | cross_down(wk, wd)
+
+
+KD_PV_STRATEGIES = {
+    "L1 日K>D＋買進觸發／日K<D＋賣出觸發": l1_daily_kd,
+    "L2 日K>50＋買進觸發／日K<50＋賣出觸發": l2_kd_fifty,
+    "L3 週K>D＋買進觸發／週K<D＋賣出觸發": l3_weekly_kd,
+    "L4 週K>D＋買進觸發／任一賣出觸發或週KD死叉": l4_weekly_kd_any_sell,
+}

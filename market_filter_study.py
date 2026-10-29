@@ -5,7 +5,9 @@
 指數濾網（加權指數用當天收盤；費半只用台股當天之前已收盤的美股交易日，避免時差偷看）：
   指數>MA60、指數>MA240、MA60上揚、
   MA20上或MA60下（只擋指數跌破月線但仍在季線上）、
-  MA60上或MA240下（只擋指數跌破季線但仍在年線上）
+  MA60上或MA240下（只擋指數跌破季線但仍在年線上）、
+  MA20上或MA240下（只擋指數跌破月線但仍在年線上）、
+  MA20上且MA240下 / MA60上且MA240下（只在空頭中反彈站上月線/季線時買）
 用法：python market_filter_study.py [代號]
 """
 import sys
@@ -28,6 +30,9 @@ def index_filters(df, name):
         "MA60上揚": ma60 > ma60.shift(20),
         "MA20上或MA60下": (idx > ma20) | (idx < ma60),
         "MA60上或MA240下": (idx > ma60) | (idx < ma240),
+        "MA20上或MA240下": (idx > ma20) | (idx < ma240),
+        "MA20上且MA240下": (idx > ma20) & (idx < ma240),
+        "MA60上且MA240下": (idx > ma60) & (idx < ma240),
     }
     # 對齊到個股交易日：台股指數用當天；美股指數只用日期早於當天的最近一筆
     lag = pd.Timedelta(days=0 if name == "TAIEX" else 1)
@@ -58,9 +63,12 @@ def main(stock_id="2382", indices=("TAIEX", "SOX")):
             for fname, f in filters.items():
                 tr, eq = run(df, sigs[ename] & cheap & f, add, start, df.index[-1], target)
                 key = (ename.split("（")[0], f"{target:.0%}", fname)
+                if tr.empty:
+                    rows[key] = {"筆數": 0}
+                    continue
                 rows[key] = summary(tr, eq) | {"最深套牢%": tr["最深套牢%"].min(), "最長持有日": tr["持有日"].max()}
                 details[key] = tr
-    table = pd.DataFrame(rows).T.drop(columns=["最好%"])
+    table = pd.DataFrame(rows).T.drop(columns=["最好%"]).fillna({"已結案": 0})
     table.index.names = ["買點", "停利", "濾網"]
     table.round(2).to_csv(ROOT / "results" / f"{stock_id}_market_filter.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 100, "display.unicode.east_asian_width", True):

@@ -168,6 +168,32 @@ def forward_dividend_eps(df, stock_id, payout_years=3):
     return out, source
 
 
+def growth_rates(df, stock_id):
+    """每日可得的成長率：近 3 個月營收年增率、近 4 季 EPS 年增率（只用已公布資料）。"""
+    rev = pd.read_csv(ROOT / "data" / f"{stock_id}_revenue.csv").sort_values(["revenue_year", "revenue_month"])
+    rev["r3"] = rev["revenue"].rolling(3).sum()
+    rev["rev_yoy"] = rev["r3"] / rev["r3"].shift(12) - 1
+    rev["published"] = pd.to_datetime(dict(year=rev["revenue_year"], month=rev["revenue_month"], day=1)) \
+        + pd.DateOffset(months=1, days=9)
+    eps = quarterly_eps(stock_id)
+    eps["ttm"] = eps["eps"].rolling(4).sum()
+    eps["eps_yoy"] = eps["ttm"] / eps["ttm"].shift(4) - 1
+
+    def daily(series, dates):
+        s = pd.Series(series.values, index=dates).groupby(level=0).last()
+        return s.reindex(df.index.union(s.index)).ffill().reindex(df.index)
+    return daily(rev["rev_yoy"], rev["published"]), daily(eps["eps_yoy"], eps["published"])
+
+
+def dynamic_threshold(df, stock_id, tiers=((0.5, 3), (0.2, 4)), base=5):
+    """營收與 EPS 年增率都達到某級距時，殖利率門檻降低；否則用 base。"""
+    rev_yoy, eps_yoy = growth_rates(df, stock_id)
+    th = pd.Series(float(base), index=df.index)
+    for growth, level in sorted(tiers):  # 由低到高覆蓋，最高級距優先
+        th[(rev_yoy >= growth) & (eps_yoy >= growth)] = level
+    return th, rev_yoy, eps_yoy
+
+
 def accuracy(est, stock_id):
     """每年公告前一天的推估值 vs 實際公告值。"""
     div = dividend_table(stock_id)
@@ -201,6 +227,21 @@ def main(stock_id="2382"):
             rows[(mname, f"殖利率>={th}%")] = summary(tr, eq)
             details[(mname, th)] = tr
             tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{mname}_{th}_trades.csv", index=False, encoding="utf-8-sig")
+        for label, tiers in (("動態 20%→4%、50%→3%", ((0.5, 3), (0.2, 4))),
+                             ("動態 30%→4%、60%→3%（較嚴）", ((0.6, 3), (0.3, 4))),
+                             ("動態 15%→4%、40%→3%（較鬆）", ((0.4, 3), (0.15, 4)))):
+            dyn, rev_yoy, eps_yoy = dynamic_threshold(df, stock_id, tiers)
+            tr, eq = run_multi(df, buy & (yld >= dyn), add, start, df.index[-1])
+            if len(tr):
+                tr["當時門檻%"] = dyn.reindex(tr["進場"] - pd.Timedelta(days=1), method="ffill").values
+                tr["當時殖利率%"] = yld.reindex(tr["進場"] - pd.Timedelta(days=1), method="ffill").round(1).values
+            rows[(mname, label)] = summary(tr, eq)
+            details[(mname, label)] = tr
+            if label.startswith("動態 20%"):
+                tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{mname}_dynamic_trades.csv", index=False, encoding="utf-8-sig")
+                if mname == "EPS法":
+                    d = pd.DataFrame({"門檻": dyn, "營收年增": rev_yoy, "EPS年增": eps_yoy})[start:]
+                    tier_days = d.groupby([d.index.year, "門檻"]).size().unstack(fill_value=0)
     tr, eq = run_multi(df, buy, add, start, df.index[-1])
     rows[("—", "不看殖利率")] = summary(tr, eq)
 
@@ -210,9 +251,10 @@ def main(stock_id="2382"):
         print("【每年預估殖利率中位數%】")
         print(pd.DataFrame(yearly).T.to_string(), "\n")
         print(pd.DataFrame(rows).T.round(1).to_string(), "\n")
-        for th in (4, 5):
-            print(f"【EPS法 殖利率>={th}% 交易明細】")
-            print(details[("EPS法", th)].round(1).to_string(), "\n")
+        print("【EPS法 動態門檻：每年各門檻天數】")
+        print(tier_days.to_string(), "\n")
+        print("【EPS法 動態 20%→4%、50%→3% 交易明細】")
+        print(details[("EPS法", "動態 20%→4%、50%→3%")].round(1).to_string(), "\n")
 
 
 if __name__ == "__main__":

@@ -168,35 +168,51 @@ def forward_dividend_eps(df, stock_id, payout_years=3):
     return out, source
 
 
+def accuracy(est, stock_id):
+    """每年公告前一天的推估值 vs 實際公告值。"""
+    div = dividend_table(stock_id)
+    rows = {}
+    for fy, r in div.loc[2016:].iterrows():
+        before = est[est.index < r["announced"]].dropna()
+        if len(before):
+            rows[fy] = {"實際": r["cash"], "推估": round(before.iloc[-1], 2), "誤差%": round(100 * (before.iloc[-1] / r["cash"] - 1))}
+    return pd.DataFrame(rows).T
+
+
 def main(stock_id="2382"):
     df = load(stock_id)
     raw_close = pd.read_csv(ROOT / "data" / f"{stock_id}.csv", parse_dates=["date"]).set_index("date")["close"]
-    dps, source = forward_dividend(df, stock_id)
-    yld = 100 * dps / raw_close
     buy, _ = signals(df)
     t = pv_triggers(df)
     add = t["wick_buy"] | t["pv_buy"]
     start = df.index[0] + pd.Timedelta(days=int(WARMUP * 365.25 / 245))
 
-    pd.DataFrame({"收盤": raw_close, "預估股利": dps.round(2), "來源": source, "預估殖利率%": yld.round(2)}) \
-        .to_csv(ROOT / "results" / f"{stock_id}_forward_yield.csv", encoding="utf-8-sig")
-    yearly = yld[start:].groupby(yld[start:].index.year).agg(["min", "median", "max"]).round(1)
-    yearly["殖利率>=5%天數"] = (yld[start:] >= 5).groupby(yld[start:].index.year).sum()
+    methods = {"營收法": forward_dividend(df, stock_id), "EPS法": forward_dividend_eps(df, stock_id)}
+    rows, details, acc, yearly = {}, {}, {}, {}
+    for mname, (dps, source) in methods.items():
+        yld = 100 * dps / raw_close
+        pd.DataFrame({"收盤": raw_close, "預估股利": dps.round(2), "來源": source, "預估殖利率%": yld.round(2)}) \
+            .to_csv(ROOT / "results" / f"{stock_id}_forward_yield_{mname}.csv", encoding="utf-8-sig")
+        acc[mname] = accuracy(dps, stock_id)
+        y = yld[start:]
+        yearly[mname] = y.groupby(y.index.year).median().round(1)
+        for th in (3, 4, 5):
+            tr, eq = run_multi(df, buy & (yld >= th), add, start, df.index[-1])
+            rows[(mname, f"殖利率>={th}%")] = summary(tr, eq)
+            details[(mname, th)] = tr
+            tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{mname}_{th}_trades.csv", index=False, encoding="utf-8-sig")
+    tr, eq = run_multi(df, buy, add, start, df.index[-1])
+    rows[("—", "不看殖利率")] = summary(tr, eq)
 
-    rows, details = {}, {}
-    for th in (None, 3, 4, 5):
-        b = buy if th is None else buy & (yld >= th)
-        name = "不看殖利率" if th is None else f"殖利率>={th}%"
-        tr, eq = run_multi(df, b, add, start, df.index[-1])
-        rows[name] = summary(tr, eq)
-        details[name] = tr
-        tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{th or 'none'}_trades.csv", index=False, encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
-        print("【每年預估殖利率%】\n", yearly.to_string(), "\n")
+        print("【推估準確度：公告前一天的推估 vs 實際】")
+        print(pd.concat(acc, axis=1).to_string(), "\n")
+        print("【每年預估殖利率中位數%】")
+        print(pd.DataFrame(yearly).T.to_string(), "\n")
         print(pd.DataFrame(rows).T.round(1).to_string(), "\n")
-        for name in ("殖利率>=5%", "殖利率>=4%"):
-            print(f"【{name} 交易明細】")
-            print(details[name].to_string(), "\n")
+        for th in (4, 5):
+            print(f"【EPS法 殖利率>={th}% 交易明細】")
+            print(details[("EPS法", th)].round(1).to_string(), "\n")
 
 
 if __name__ == "__main__":

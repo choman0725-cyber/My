@@ -29,12 +29,13 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
     open_check：隔天開盤價若已高於這次加碼的門檻價（首買價 × (1+門檻)），這次不加，資格保留。
     scheme：(首買比例, 每次加碼比例或各次比例, 加碼門檻) 覆寫模組預設。
     fill：next_open＝訊號隔天開盤成交；close＝訊號當天收盤價成交（盤後定價交易，假設都成交），
-          交易日期仍記在隔天。"""
+          交易日期仍記在隔天。也可傳 (買進方式, 賣出方式)，例如 ("next_open", "close")。"""
     FIRST, ADD, ADD_STEPS = scheme if scheme else (globals()["FIRST"], globals()["ADD"], globals()["ADD_STEPS"])
     MAX_ADDS = len(ADD_STEPS)
-    if fill == "close":
-        df = df.copy()
-        df["open"] = df["close"].shift(1).fillna(df["open"])
+    buy_fill, sell_fill = fill if isinstance(fill, tuple) else (fill, fill)
+    prev_close = df["close"].shift(1).fillna(df["open"]).values
+    ob = prev_close if buy_fill == "close" else df["open"].values   # 買進／加碼成交價
+    os_ = prev_close if sell_fill == "close" else df["open"].values  # 賣出成交價
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     o, c, lo, hi = df["open"].values, df["close"].values, df["low"].values, df["high"].values
     buy, add_trigger = buy.fillna(False).values, add_trigger.fillna(False).values
@@ -47,8 +48,8 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
                 if buy[p]:
                     base = cash
                     invest = base * FIRST
-                    pos = {"start": i, "first": o[i], "shares": invest * (1 - BUY_COST) / o[i], "cost": invest,
-                           "base": base, "adds": 0, "low": o[i], "peak": 0.0, "armed": None, "hit": 0}
+                    pos = {"start": i, "first": ob[i], "shares": invest * (1 - BUY_COST) / ob[i], "cost": invest,
+                           "base": base, "adds": 0, "low": ob[i], "peak": 0.0, "armed": None, "hit": 0}
                     cash -= invest
             else:
                 gain = c[p] / (pos["cost"] / pos["shares"]) - 1
@@ -61,7 +62,7 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
                 elif pos["armed"] is not None:
                     reason = "保本" if gain < 0 else "技術出場" if tech[p] else None
                 if reason:
-                    proceeds = pos["shares"] * o[i] * (1 - SELL_COST)
+                    proceeds = pos["shares"] * os_[i] * (1 - SELL_COST)
                     trades.append({"進場": df.index[pos["start"]], "達標日": pos["armed"], "出場": df.index[i],
                                    "原因": reason, "加碼": pos["adds"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
                                    "持有中最高獲利%": 100 * pos["peak"], "最深套牢%": 100 * (pos["low"] / pos["first"] - 1),
@@ -73,10 +74,10 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
                          and c[p] / pos["first"] - 1 <= ADD_STEPS[pos["adds"]])
                         or (add_mode == "armed" and pos["adds"] < pos["hit"])
                         or (add_mode == "armed_below_first" and pos["adds"] < pos["hit"] and c[p] < pos["first"])) \
-                        and not (open_check and o[i] > pos["first"] * (1 + ADD_STEPS[pos["adds"]])):
+                        and not (open_check and ob[i] > pos["first"] * (1 + ADD_STEPS[pos["adds"]])):
                     amount = ADD[pos["adds"]] if isinstance(ADD, (tuple, list)) else ADD
                     invest = min(cash, pos["base"] * amount)
-                    pos["shares"] += invest * (1 - BUY_COST) / o[i]
+                    pos["shares"] += invest * (1 - BUY_COST) / ob[i]
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest

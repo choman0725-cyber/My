@@ -2,7 +2,7 @@
 
 完整進場條件：EPS 法殖利率 >= 5% ＆ 技術買點 ＆ 指數濾網
 加碼與出場不變：下跌 10/20/30% 且爆量下影線/長紅各加碼 20%，獲利達標全賣，不停損。
-指數濾網（只用前一交易日已收盤的指數，避免台美時差偷看）：
+指數濾網（加權指數用當天收盤；費半只用台股當天之前已收盤的美股交易日，避免時差偷看）：
   指數>MA60、指數>MA240、MA60上揚、
   MA20上或MA60下（只擋指數跌破月線但仍在季線上）、
   MA60上或MA240下（只擋指數跌破季線但仍在年線上）
@@ -29,10 +29,12 @@ def index_filters(df, name):
         "MA20上或MA60下": (idx > ma20) | (idx < ma60),
         "MA60上或MA240下": (idx > ma60) | (idx < ma240),
     }
-    # 對齊到個股交易日：只用嚴格早於當天的最近一個指數收盤
+    # 對齊到個股交易日：台股指數用當天；美股指數只用日期早於當天的最近一筆
+    lag = pd.Timedelta(days=0 if name == "TAIEX" else 1)
     out = {}
     for k, v in raw.items():
-        v = v.astype(float).shift(1)
+        v = v.astype(float)
+        v.index = v.index + lag
         out[f"{name} {k}"] = v.reindex(df.index.union(v.index)).ffill().reindex(df.index).fillna(0).astype(bool)
     return out
 

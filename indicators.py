@@ -196,3 +196,60 @@ STRATEGIES = {
     "E1 60 日新高/20 日新低": e1_new_high,
     "E2 跳空缺口": e2_gap,
 }
+
+
+# ---------- 策略：F 上下引線 × 價量 ----------
+
+def shadows(df):
+    """回傳 (上影線, 下影線, 全長)。"""
+    body_top = df[["open", "close"]].max(axis=1)
+    body_bottom = df[["open", "close"]].min(axis=1)
+    return df["high"] - body_top, body_bottom - df["low"], df["high"] - df["low"]
+
+
+def wick_conditions(df, wick_ratio=0.5, vol_mult=1.5):
+    """長下影線、長上影線、爆量、低檔、高檔等基本條件。
+
+    長影線：影線占當日 K 棒全長 >= wick_ratio，且全長 >= 0.8 倍 ATR（排除小 K 棒）。
+    爆量：成交量 >= vol_mult 倍 20 日均量。
+    低檔：收盤 < MA20；高檔：收盤 > MA20。
+    """
+    upper, lower, rng = shadows(df)
+    big_bar = rng >= 0.8 * atr(df)
+    ma20 = sma(df["close"], 20)
+    return {
+        "long_lower": (lower >= wick_ratio * rng) & big_bar,
+        "long_upper": (upper >= wick_ratio * rng) & big_bar,
+        "vol_up": df["volume"] >= vol_mult * sma(df["volume"], 20),
+        "low_zone": df["close"] < ma20,
+        "high_zone": df["close"] > ma20,
+    }
+
+
+def f1_wick(df):
+    c = wick_conditions(df)
+    return c["long_lower"], c["long_upper"]
+
+
+def f2_wick_volume(df):
+    c = wick_conditions(df)
+    return c["long_lower"] & c["vol_up"], c["long_upper"] & c["vol_up"]
+
+
+def f3_wick_volume_zone(df):
+    c = wick_conditions(df)
+    return (c["long_lower"] & c["vol_up"] & c["low_zone"],
+            c["long_upper"] & c["vol_up"] & c["high_zone"])
+
+
+def f4_wick_zone(df):
+    c = wick_conditions(df)
+    return c["long_lower"] & c["low_zone"], c["long_upper"] & c["high_zone"]
+
+
+WICK_STRATEGIES = {
+    "F1 下影線買／上影線賣": f1_wick,
+    "F2 ＋爆量": f2_wick_volume,
+    "F3 ＋爆量＋位置（低檔下影／高檔上影）": f3_wick_volume_zone,
+    "F4 ＋位置（不看量）": f4_wick_zone,
+}

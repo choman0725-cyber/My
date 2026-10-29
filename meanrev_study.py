@@ -17,7 +17,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
+from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load, RESULTS
 from indicators import cci_line, cross_down, cross_up, kd, rsi, sma, williams_r
 
 
@@ -141,7 +141,7 @@ def main(stock_id="2382", in_sample_years=7):
         rows.append(row)
     table = pd.DataFrame(rows)
 
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     table.round(2).to_csv(out / f"{stock_id}_meanrev_grid.csv", index=False, encoding="utf-8-sig")
 

@@ -14,7 +14,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
+from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load, RESULTS
 from indicators import bollinger, cross_down, kd, pv_triggers, setup_zones
 from yield_entry_study import entries
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, forward_dividend_eps
@@ -110,13 +110,13 @@ def main(stock_id="2382"):
                 details[key] = tr
     table = pd.DataFrame(rows).T
     table.index.names = ["買點", "門檻", "出場"]
-    table.round(2).to_csv(ROOT / "results" / f"{stock_id}_trail_exit_summary.csv", encoding="utf-8-sig")
+    table.round(2).to_csv(RESULTS / f"{stock_id}_trail_exit_summary.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 50, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         best = table["年化%"].idxmax()
         print(f"【年化最高：{best}】")
         print(details[best].round(1).to_string())
-        details[best].to_csv(ROOT / "results" / f"{stock_id}_trail_exit_best_trades.csv", index=False, encoding="utf-8-sig")
+        details[best].to_csv(RESULTS / f"{stock_id}_trail_exit_best_trades.csv", index=False, encoding="utf-8-sig")
 
 
 if __name__ == "__main__":

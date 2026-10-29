@@ -10,7 +10,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize
+from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize, RESULTS
 from indicators import WICK_STRATEGIES, wick_conditions
 
 HORIZONS = (5, 10, 20)
@@ -57,7 +57,7 @@ def main(stock_id="2382", in_sample_years=7):
         rows[name] = summarize(*run(df, buy, sell, start, end))
     backtests = pd.DataFrame(rows).T
 
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     events.round(2).to_csv(out / f"{stock_id}_wick_events.csv", encoding="utf-8-sig")
     backtests.round(2).to_csv(out / f"{stock_id}_wick_backtest.csv", encoding="utf-8-sig")

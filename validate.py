@@ -13,7 +13,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize
+from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize, RESULTS
 from indicators import sma, wick_conditions
 
 
@@ -50,7 +50,7 @@ def main(stock_id="2382", in_sample_years=7):
         print(f"{pname}：{s:%Y-%m-%d} ~ {e:%Y-%m-%d}")
 
     table = pd.DataFrame(rows).T
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     table.round(2).to_csv(out / f"{stock_id}_validate_upper_wick.csv", encoding="utf-8-sig")
     pd.concat(all_trades).to_csv(out / f"{stock_id}_validate_upper_wick_trades.csv", index=False, encoding="utf-8-sig")

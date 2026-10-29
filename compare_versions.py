@@ -9,7 +9,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, load
+from backtest import ROOT, WARMUP, load, RESULTS
 from market_filter_study import index_filters
 from trail_exit_study import run, summary
 from yield_entry_study import entries
@@ -45,7 +45,7 @@ def main(stock_id="2382"):
                       "目前持有": "無" if open_tr.empty else f"{open_tr['進場'].iloc[0]:%Y-%m-%d} 進場 {open_tr['報酬%'].iloc[0]:+.1f}%"}
         yearly[name] = eq.groupby(eq.index.year).last().pct_change().fillna(eq.groupby(eq.index.year).last().iloc[0] - 1) * 100
         details[name] = tr
-        tr.to_csv(ROOT / "results" / f"{stock_id}_version_{name[0]}_trades.csv", index=False, encoding="utf-8-sig")
+        tr.to_csv(RESULTS / f"{stock_id}_version_{name[0]}_trades.csv", index=False, encoding="utf-8-sig")
     bh = df.loc[start:, "close"]
     bh_y = bh.groupby(bh.index.year).last()
     yearly["買進持有"] = bh_y.pct_change().fillna(bh_y.iloc[0] / bh.iloc[0] - 1) * 100
@@ -54,8 +54,8 @@ def main(stock_id="2382"):
                     "最大回撤%": 100 * (bh / bh.cummax() - 1).min()}
 
     table = pd.DataFrame(rows).T
-    pd.DataFrame(yearly).round(1).to_csv(ROOT / "results" / f"{stock_id}_versions_yearly.csv", encoding="utf-8-sig")
-    table.to_csv(ROOT / "results" / f"{stock_id}_versions_summary.csv", encoding="utf-8-sig")
+    pd.DataFrame(yearly).round(1).to_csv(RESULTS / f"{stock_id}_versions_yearly.csv", encoding="utf-8-sig")
+    table.to_csv(RESULTS / f"{stock_id}_versions_summary.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(table.T.to_string(), "\n")
         print("【每年報酬%】\n", pd.DataFrame(yearly).round(1).to_string(), "\n")

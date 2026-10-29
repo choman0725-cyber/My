@@ -15,7 +15,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, load
+from backtest import ROOT, WARMUP, load, RESULTS
 from indicators import sma
 from trail_exit_study import run, summary
 from yield_entry_study import entries
@@ -75,7 +75,7 @@ def main(stock_id="2382", indices=("TAIEX", "SOX")):
                 details[key] = tr
     table = pd.DataFrame(rows).T.drop(columns=["最好%"]).fillna({"已結案": 0})
     table.index.names = ["買點", "停利", "濾網"]
-    table.round(2).to_csv(ROOT / "results" / f"{stock_id}_market_filter.csv", encoding="utf-8-sig")
+    table.round(2).to_csv(RESULTS / f"{stock_id}_market_filter.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 100, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string())
     return table, details

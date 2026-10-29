@@ -3,12 +3,14 @@
 規則：
 - 收盤出現買進訊號 → 隔天開盤買進；出現賣出訊號 → 隔天開盤賣出。
 - 同時只持有一筆、全額進出；期間結束仍持有則以最後收盤價結算。
-- 價格使用除權息調整後的 OHLC。
+- 價格預設使用除權息調整後的 OHLC（含現金股利）；
+  環境變數 PRICE_MODE=raw 時改用原始股價（不含股利），結果寫到 results_raw/。
 - 成本：買 0.1425%，賣 0.1425% + 證交稅 0.3%。
 
 用法：python backtest.py [代號] [樣本內年數]
     python backtest.py 2382 7
 """
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +20,8 @@ import pandas as pd
 from indicators import STRATEGIES
 
 ROOT = Path(__file__).parent
+RAW_PRICES = os.environ.get("PRICE_MODE") == "raw"
+RESULTS = ROOT / ("results_raw" if RAW_PRICES else "results")
 BUY_COST = 0.001425
 SELL_COST = 0.001425 + 0.003
 WARMUP = 120  # 指標暖身天數，取樣本內起點前的資料計算指標
@@ -25,6 +29,8 @@ WARMUP = 120  # 指標暖身天數，取樣本內起點前的資料計算指標
 
 def load(stock_id):
     df = pd.read_csv(ROOT / "data" / f"{stock_id}.csv", parse_dates=["date"]).set_index("date")
+    if RAW_PRICES:
+        return df.drop(columns="adj_close")
     factor = df["adj_close"] / df["close"]
     for col in ("open", "high", "low", "close"):
         df[col] = df[col] * factor
@@ -113,7 +119,7 @@ def main(stock_id="2382", in_sample_years=7):
     order = ["買進持有（基準）"] + table.drop("買進持有（基準）").sort_values("年化%", ascending=False).index.tolist()
     table = table.loc[order]
 
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     table.round(2).to_csv(out / f"{stock_id}_in_sample_summary.csv", encoding="utf-8-sig")
     pd.concat(all_trades).to_csv(out / f"{stock_id}_in_sample_trades.csv", index=False, encoding="utf-8-sig")

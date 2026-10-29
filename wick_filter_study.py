@@ -13,7 +13,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, load
+from backtest import ROOT, WARMUP, load, RESULTS
 from indicators import pv_triggers
 from market_filter_study import index_filters
 from trail_exit_study import run, summary
@@ -49,7 +49,7 @@ def main(stock_id="2382"):
                         "持有中%": tr.loc[tr["出場"].isna(), "報酬%"].sum() if tr["出場"].isna().any() else None})
     table = pd.DataFrame(rows).T.drop(columns=["最好%"], errors="ignore")
     table.index.names = ["買點", "停利", "大盤", "上影線"]
-    table.round(2).to_csv(ROOT / "results" / f"{stock_id}_wick_filter.csv", encoding="utf-8-sig")
+    table.round(2).to_csv(RESULTS / f"{stock_id}_wick_filter.csv", encoding="utf-8-sig")
     cols = ["筆數", "已結案", "勝率%", "每筆平均%", "年化%", "最大回撤%", "最深套牢%", "最長持有日", "持有中%"]
     with pd.option_context("display.width", 250, "display.max_rows", 100, "display.unicode.east_asian_width", True):
         print(table[cols].round(1).to_string())

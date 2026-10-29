@@ -7,7 +7,7 @@ import sys
 import pandas as pd
 
 import indicators as ind
-from backtest import ROOT, WARMUP, load, run
+from backtest import ROOT, WARMUP, load, run, RESULTS
 
 GROUPS = ["STRATEGIES", "WICK_STRATEGIES", "MACD_KD_STRATEGIES", "KD_MACD_STRATEGIES",
           "KD_BOLLINGER_STRATEGIES", "ZONE_PV_STRATEGIES", "KD_PV_STRATEGIES"]
@@ -41,7 +41,7 @@ def main(stock_id="2382", in_sample_years=7):
         rows.append(row)
 
     table = pd.DataFrame(rows).set_index("策略").sort_values("全期間勝率%", ascending=False)
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     table.round(1).to_csv(out / f"{stock_id}_win_rate_ranking.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 100, "display.unicode.east_asian_width", True):

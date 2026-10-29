@@ -8,7 +8,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, load
+from backtest import ROOT, WARMUP, load, RESULTS
 from indicators import sma
 from meanrev_study import resonance, run_trades, stats
 
@@ -30,7 +30,7 @@ def main(stock_id="2382", in_sample_years=7):
             row.update({f"{p}次數": st["次數"], f"{p}勝率%": st["勝率%"], f"{p}年化%": st["年化%"]})
         rows.append(row)
     t = pd.DataFrame(rows)
-    t.round(2).to_csv(ROOT / "results" / f"{stock_id}_meanrev_robustness.csv", index=False, encoding="utf-8-sig")
+    t.round(2).to_csv(RESULTS / f"{stock_id}_meanrev_robustness.csv", index=False, encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 100, "display.unicode.east_asian_width", True):
         print(t.round(1).to_string(index=False))
         print("\n各參數平均：")

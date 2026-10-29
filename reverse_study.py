@@ -7,7 +7,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize
+from backtest import ROOT, WARMUP, buy_and_hold, load, run, summarize, RESULTS
 from indicators import MACD_KD_STRATEGIES, STRATEGIES, WICK_STRATEGIES
 
 COLUMNS = ["交易次數", "勝率%", "賺賠比", "年化%", "最大回撤%", "持股時間%"]
@@ -32,7 +32,7 @@ def main(stock_id="2382", in_sample_years=7):
 
     table = pd.DataFrame(rows).T[COLUMNS]
     table.index.names = ["策略", "期間", "方向"]
-    out = ROOT / "results"
+    out = RESULTS
     out.mkdir(exist_ok=True)
     table.round(2).to_csv(out / f"{stock_id}_reverse.csv", encoding="utf-8-sig")
 

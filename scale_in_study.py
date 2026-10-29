@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
+from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load, RESULTS
 from final_strategy import signals
 from indicators import pv_triggers
 
@@ -114,7 +114,7 @@ def main(stock_id="2382"):
             continue
         trades, equity = run(df, buy, add, stop, start, df.index[-1], block)
         rows[name] = summary(trades, equity)
-        trades.to_csv(ROOT / "results" / f"{stock_id}_scale_in_{name}.csv", index=False, encoding="utf-8-sig")
+        trades.to_csv(RESULTS / f"{stock_id}_scale_in_{name}.csv", index=False, encoding="utf-8-sig")
         detail = trades
     if fstop is None:
         print("（尚無營收資料 data/%s_revenue.csv，略過基本面停損）" % stock_id)

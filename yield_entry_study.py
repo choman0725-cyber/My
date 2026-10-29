@@ -13,7 +13,7 @@ import sys
 
 import pandas as pd
 
-from backtest import ROOT, WARMUP, load
+from backtest import ROOT, WARMUP, load, RESULTS
 from final_strategy import signals
 from indicators import bollinger, cross_up, kd, pv_triggers, setup_zones
 from yield_study import forward_dividend_eps, run_multi, summary
@@ -49,7 +49,7 @@ def main(stock_id="2382", threshold=5):
         tr, eq = run_multi(df, sig & cheap, add, start, df.index[-1])
         rows[name] = summary(tr, eq)
         details[name] = tr
-        tr.to_csv(ROOT / "results" / f"{stock_id}_yield_entry_{name.split('（')[0]}.csv", index=False, encoding="utf-8-sig")
+        tr.to_csv(RESULTS / f"{stock_id}_yield_entry_{name.split('（')[0]}.csv", index=False, encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(pd.DataFrame(rows).T.round(1).to_string(), "\n")
         for name in list(sigs)[1:]:

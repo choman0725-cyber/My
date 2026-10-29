@@ -24,7 +24,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
+from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load, RESULTS
 from final_strategy import signals
 from indicators import bollinger, cross_down, cross_up, kd, pv_triggers, setup_zones
 from yield_study import ADD, ADD_STEPS, FIRST, MAX_ADDS, TAKE_PROFIT, forward_dividend_eps
@@ -155,9 +155,9 @@ def main(stock_id="2382"):
             tr, eq = run(df, buy, add, ex, pyr, start, df.index[-1])
             rows[(f"出場:{ename}", aname)] = summary(tr, eq)
             details[(ename, aname)] = tr
-            tr.to_csv(ROOT / "results" / f"{stock_id}_partial_{ename}_{aname}.csv", index=False, encoding="utf-8-sig")
+            tr.to_csv(RESULTS / f"{stock_id}_partial_{ename}_{aname}.csv", index=False, encoding="utf-8-sig")
     table = pd.DataFrame(rows).T
-    table.round(2).to_csv(ROOT / "results" / f"{stock_id}_partial_exit_summary.csv", encoding="utf-8-sig")
+    table.round(2).to_csv(RESULTS / f"{stock_id}_partial_exit_summary.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for key in (("價量引線", "不加碼"), ("價量引線", "價量引線加碼"), ("混合", "混合加碼")):

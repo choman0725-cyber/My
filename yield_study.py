@@ -18,7 +18,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load
+from backtest import BUY_COST, ROOT, SELL_COST, WARMUP, load, RESULTS
 from final_strategy import signals
 from indicators import pv_triggers
 
@@ -218,7 +218,7 @@ def main(stock_id="2382"):
     for mname, (dps, source) in methods.items():
         yld = 100 * dps / raw_close
         pd.DataFrame({"收盤": raw_close, "預估股利": dps.round(2), "來源": source, "預估殖利率%": yld.round(2)}) \
-            .to_csv(ROOT / "results" / f"{stock_id}_forward_yield_{mname}.csv", encoding="utf-8-sig")
+            .to_csv(RESULTS / f"{stock_id}_forward_yield_{mname}.csv", encoding="utf-8-sig")
         acc[mname] = accuracy(dps, stock_id)
         y = yld[start:]
         yearly[mname] = y.groupby(y.index.year).median().round(1)
@@ -226,7 +226,7 @@ def main(stock_id="2382"):
             tr, eq = run_multi(df, buy & (yld >= th), add, start, df.index[-1])
             rows[(mname, f"殖利率>={th}%")] = summary(tr, eq)
             details[(mname, th)] = tr
-            tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{mname}_{th}_trades.csv", index=False, encoding="utf-8-sig")
+            tr.to_csv(RESULTS / f"{stock_id}_yield_{mname}_{th}_trades.csv", index=False, encoding="utf-8-sig")
         for label, tiers in (("動態 20%→4%、50%→3%", ((0.5, 3), (0.2, 4))),
                              ("動態 30%→4%、60%→3%（較嚴）", ((0.6, 3), (0.3, 4))),
                              ("動態 15%→4%、40%→3%（較鬆）", ((0.4, 3), (0.15, 4)))):
@@ -238,7 +238,7 @@ def main(stock_id="2382"):
             rows[(mname, label)] = summary(tr, eq)
             details[(mname, label)] = tr
             if label.startswith("動態 20%"):
-                tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{mname}_dynamic_trades.csv", index=False, encoding="utf-8-sig")
+                tr.to_csv(RESULTS / f"{stock_id}_yield_{mname}_dynamic_trades.csv", index=False, encoding="utf-8-sig")
                 if mname == "EPS法":
                     d = pd.DataFrame({"門檻": dyn, "營收年增": rev_yoy, "EPS年增": eps_yoy})[start:]
                     tier_days = d.groupby([d.index.year, "門檻"]).size().unstack(fill_value=0)

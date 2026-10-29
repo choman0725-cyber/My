@@ -123,6 +123,51 @@ def forward_dividend(df, stock_id):
     return out, source
 
 
+# 季報法定公布期限（季末後）：Q1 5/15、Q2 8/14、Q3 11/14、Q4（年報）隔年 3/31
+REPORT_DEADLINE = {3: (5, 15), 6: (8, 14), 9: (11, 14), 12: (3, 31)}
+
+
+def quarterly_eps(stock_id):
+    fin = pd.read_csv(ROOT / "data" / f"{stock_id}_financials.csv", parse_dates=["date"])
+    eps = fin[fin["type"] == "EPS"][["date", "value"]].rename(columns={"date": "quarter_end", "value": "eps"})
+    eps = eps.sort_values("quarter_end").reset_index(drop=True)
+
+    def published(q):
+        m, d = REPORT_DEADLINE[q.month]
+        return pd.Timestamp(q.year + (q.month == 12), m, d)
+    eps["published"] = eps["quarter_end"].map(published)
+    eps["fy"] = eps["quarter_end"].dt.year
+    return eps
+
+
+def forward_dividend_eps(df, stock_id, payout_years=3):
+    """預估股利 = 最近四季 EPS（已公布者）× 近 N 年平均配息率；已公告就用公告值。"""
+    div = dividend_table(stock_id)
+    eps = quarterly_eps(stock_id)
+    annual_eps = eps.groupby("fy")["eps"].agg(["sum", "size"])
+    annual_eps = annual_eps[annual_eps["size"] == 4]["sum"]
+    payout = (div["cash"] / annual_eps).dropna()
+    out = pd.Series(np.nan, index=df.index)
+    source = pd.Series("", index=df.index)
+    for t in df.index:
+        pending = div[div["ex_date"] > t]
+        fy = pending.index.min() if len(pending) else div.index.max() + 1
+        if fy in div.index and div.loc[fy, "announced"] <= t:
+            out[t], source[t] = div.loc[fy, "cash"], "已公告"
+            continue
+        known = eps[eps["published"] <= t]
+        if len(known) < 4:
+            continue
+        ttm = known["eps"].iloc[-4:].sum()
+        # 配息率只用當時已知（已公告）的年度
+        known_payout = payout[[y for y in payout.index if div.loc[y, "announced"] <= t]].iloc[-payout_years:]
+        if known_payout.empty:
+            continue
+        out[t] = ttm * known_payout.mean()
+        source[t] = f"EPS推估(TTM={ttm:.2f},配息率={known_payout.mean():.0%})"
+    return out, source
+
+
 def main(stock_id="2382"):
     df = load(stock_id)
     raw_close = pd.read_csv(ROOT / "data" / f"{stock_id}.csv", parse_dates=["date"]).set_index("date")["close"]

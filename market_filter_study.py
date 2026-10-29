@@ -7,7 +7,8 @@
   MA20上或MA60下（只擋指數跌破月線但仍在季線上）、
   MA60上或MA240下（只擋指數跌破季線但仍在年線上）、
   MA20上或MA240下（只擋指數跌破月線但仍在年線上）、
-  MA20上且MA240下 / MA60上且MA240下（只在空頭中反彈站上月線/季線時買）
+  MA20上且MA240下 / MA60上且MA240下（只在空頭中反彈站上月線/季線時買）、
+  非空頭排列或MA240下（空頭排列 MA5<MA20<MA60 時不買，但跌破年線照買）
 用法：python market_filter_study.py [代號]
 """
 import sys
@@ -33,6 +34,7 @@ def index_filters(df, name):
         "MA20上或MA240下": (idx > ma20) | (idx < ma240),
         "MA20上且MA240下": (idx > ma20) & (idx < ma240),
         "MA60上且MA240下": (idx > ma60) & (idx < ma240),
+        "非空頭排列或MA240下": ~((sma(idx, 5) < ma20) & (ma20 < ma60)) | (idx < ma240),
     }
     # 對齊到個股交易日：台股指數用當天；美股指數只用日期早於當天的最近一筆
     lag = pd.Timedelta(days=0 if name == "TAIEX" else 1)
@@ -53,6 +55,9 @@ def main(stock_id="2382", indices=("TAIEX", "SOX")):
     sigs, add = entries(df)
 
     filters = {"無濾網": pd.Series(True, index=df.index)}
+    c = df["close"]
+    ma5, ma20, ma60, ma240 = (sma(c, n) for n in (5, 20, 60, 240))
+    filters["個股 非空頭排列或MA240下"] = ~((ma5 < ma20) & (ma20 < ma60)) | (c < ma240)
     for name in indices:
         if (ROOT / "data" / f"{name}.csv").exists():
             filters.update(index_filters(df, name))

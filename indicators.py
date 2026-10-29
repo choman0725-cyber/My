@@ -360,3 +360,61 @@ KD_MACD_STRATEGIES = {
     "H5 週KD偏多＋日MACD 金叉買／週KD 死叉賣": h5_weekly_kd,
     "H6 週KD偏多＋日MACD 金叉買／日MACD 死叉賣": h6_weekly_kd_macd_exit,
 }
+
+
+# ---------- 策略：I KD × 布林通道 ----------
+
+def bollinger(df, n=20, k=2):
+    mid = sma(df["close"], n)
+    sd = df["close"].rolling(n).std()
+    return mid - k * sd, mid, mid + k * sd
+
+
+def i1_lower_band_kd(df):
+    """逆勢：近 3 日曾觸下軌、KD 在 30 以下金叉買；觸上軌賣。"""
+    lower, _, upper = bollinger(df)
+    k, d = kd(df)
+    touched = (df["low"] <= lower).rolling(3).max().astype(bool)
+    return touched & cross_up(k, d) & (k < 30), df["high"] >= upper
+
+
+def i2_lower_band_kd_exit(df):
+    """逆勢：同 I1 進場；KD 在 70 以上死叉賣。"""
+    lower, _, _ = bollinger(df)
+    k, d = kd(df)
+    touched = (df["low"] <= lower).rolling(3).max().astype(bool)
+    return touched & cross_up(k, d) & (k < 30), cross_down(k, d) & (k > 70)
+
+
+def i3_mid_band_pullback(df):
+    """順勢拉回：收盤在中軌之上、KD 金叉買；收盤跌破中軌賣。"""
+    _, mid, _ = bollinger(df)
+    k, d = kd(df)
+    return cross_up(k, d) & (df["close"] > mid), df["close"] < mid
+
+
+def i4_upper_band_breakout(df):
+    """順勢突破：收盤突破上軌且 K > 80（強勢鈍化）買；收盤跌破中軌賣。"""
+    _, mid, upper = bollinger(df)
+    k, _ = kd(df)
+    return cross_up(df["close"], upper) & (k > 80), df["close"] < mid
+
+
+def i5_squeeze_breakout(df):
+    """收斂突破：帶寬處於近 120 日最低 20% 後，收盤突破上軌且 K > D 買；跌破中軌賣。"""
+    lower, mid, upper = bollinger(df)
+    k, d = kd(df)
+    width = (upper - lower) / mid
+    squeezed = (width.rolling(120).rank(pct=True) <= 0.2).rolling(10).max().astype(bool)
+    return squeezed & cross_up(df["close"], upper) & (k > d), df["close"] < mid
+
+
+KD_BOLLINGER_STRATEGIES = {
+    "B1 KD（單獨）": b1_kd,
+    "C1 布林通道（單獨）": c1_bollinger,
+    "I1 逆勢：觸下軌＋KD<30 金叉買／觸上軌賣": i1_lower_band_kd,
+    "I2 逆勢：觸下軌＋KD<30 金叉買／KD>70 死叉賣": i2_lower_band_kd_exit,
+    "I3 順勢拉回：中軌上＋KD 金叉買／破中軌賣": i3_mid_band_pullback,
+    "I4 順勢突破：破上軌＋K>80 買／破中軌賣": i4_upper_band_breakout,
+    "I5 收斂突破：帶寬低＋破上軌＋K>D 買／破中軌賣": i5_squeeze_breakout,
+}

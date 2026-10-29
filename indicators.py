@@ -418,3 +418,76 @@ KD_BOLLINGER_STRATEGIES = {
     "I4 順勢突破：破上軌＋K>80 買／破中軌賣": i4_upper_band_breakout,
     "I5 收斂突破：帶寬低＋破上軌＋K>D 買／破中軌賣": i5_squeeze_breakout,
 }
+
+
+# ---------- 策略：J KD＋布林判斷位置 × 價量／引線觸發買賣 ----------
+# 位置（近 5 日內曾成立即可）：
+#   低檔 = 曾觸布林下軌 且 K < 30；高檔 = 曾觸布林上軌 且 K > 70
+# 觸發（當天）：
+#   引線：爆量長下影線（買）／爆量長上影線（賣）
+#   價量：爆量長紅＝量增價漲（買）／爆量長黑＝量增價跌，或價創高量縮（賣）
+# 爆量 = 成交量 > 1.5 倍 20 日均量
+
+def _recent(cond, n=5):
+    return cond.fillna(False).astype(int).rolling(n).max().astype(bool)
+
+
+def setup_zones(df):
+    lower, mid, upper = bollinger(df)
+    k, d = kd(df)
+    low_zone = _recent(df["low"] <= lower) & _recent(k < 30)
+    high_zone = _recent(df["high"] >= upper) & _recent(k > 70)
+    return low_zone, high_zone, mid, k, d
+
+
+def pv_triggers(df):
+    c = wick_conditions(df)
+    vol_up = c["vol_up"]
+    chg = df["close"].pct_change()
+    vol_ma = sma(df["volume"], 20)
+    return {
+        "wick_buy": c["long_lower"] & vol_up,
+        "wick_sell": c["long_upper"] & vol_up,
+        "pv_buy": vol_up & (df["close"] > df["open"]) & (chg > 0.02),
+        "pv_sell": (vol_up & (df["close"] < df["open"]) & (chg < -0.02))
+                   | ((df["close"] >= df["close"].rolling(20).max()) & (df["volume"] < 0.8 * vol_ma)),
+    }
+
+
+def j1_zone_wick(df):
+    """低檔區＋爆量長下影線買；高檔區＋爆量長上影線賣。"""
+    low_zone, high_zone, *_ = setup_zones(df)
+    t = pv_triggers(df)
+    return low_zone & t["wick_buy"], high_zone & t["wick_sell"]
+
+
+def j2_zone_pv(df):
+    """低檔區＋爆量長紅買；高檔區＋爆量長黑或價創高量縮賣。"""
+    low_zone, high_zone, *_ = setup_zones(df)
+    t = pv_triggers(df)
+    return low_zone & t["pv_buy"], high_zone & t["pv_sell"]
+
+
+def j3_zone_both(df):
+    """低檔區＋（爆量長下影線 或 爆量長紅）買；高檔區＋（爆量長上影線 或 爆量長黑/價創高量縮）賣。"""
+    low_zone, high_zone, *_ = setup_zones(df)
+    t = pv_triggers(df)
+    return low_zone & (t["wick_buy"] | t["pv_buy"]), high_zone & (t["wick_sell"] | t["pv_sell"])
+
+
+def j4_trend_pv(df):
+    """順勢版：收盤在中軌上且 K > D 時，爆量長紅或爆量長下影線買；
+    高檔區出現爆量長上影線/長黑/價創高量縮，或收盤跌破中軌賣。"""
+    _, high_zone, mid, k, d = setup_zones(df)
+    t = pv_triggers(df)
+    trend = (df["close"] > mid) & (k > d)
+    sell = (high_zone & (t["wick_sell"] | t["pv_sell"])) | (df["close"] < mid)
+    return trend & (t["pv_buy"] | t["wick_buy"]), sell
+
+
+ZONE_PV_STRATEGIES = {
+    "J1 低檔區＋爆量下影線買／高檔區＋爆量上影線賣": j1_zone_wick,
+    "J2 低檔區＋爆量長紅買／高檔區＋爆量長黑或量縮創高賣": j2_zone_pv,
+    "J3 低檔區＋(下影線或長紅)買／高檔區＋(上影線或長黑/量縮)賣": j3_zone_both,
+    "J4 順勢：中軌上K>D＋(長紅或下影線)買／高檔出貨訊號或破中軌賣": j4_trend_pv,
+}

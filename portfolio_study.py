@@ -7,6 +7,9 @@
   每檔額度 = 進場當時總資產 / 5；首次買額度的 40%，下跌 10/20/30% 且爆量下影線/長紅各加碼 20%
   收盤較平均成本獲利 >= 20% → 隔天開盤全部賣出；不停損
 同一天有多檔訊號而空位不夠：依預估殖利率高到低挑選。
+一天一檔＋冷卻期＋資金水位（測試 COOLDOWNS 各種天數）：每天最多新買 1 檔（殖利率最高），
+  之後 N 個交易日內不新買；新買前先保留各檔未用的加碼額度，且「已投入＋預留加碼＋新部位額度」
+  不超過總資產 80%，所以不一定會買滿 5 檔。
 閒置現金加碼（idle_cash=True 時）：持股滿 5 檔時，觸發加碼的那一檔除了原本 20% 額度，
   再多投入「閒置現金 / 持有檔數」；閒置現金 = 現金 − 各檔尚未用掉的加碼額度。
 預估股利（適用年配、半年配、季配）：
@@ -32,6 +35,7 @@ from yield_study import REPORT_DEADLINE
 UNI = ROOT / "data" / "universe"
 MAX_SLOTS, FIRST, ADD, ADD_STEPS, TARGET, MIN_YIELD = 5, 0.4, 0.2, (-0.10, -0.20, -0.30), 0.20, 5.0
 START = pd.Timestamp("2017-01-01")
+COOLDOWNS = (0, 3, 5, 7, 10, 15, 20, 30)
 
 
 # ---------- 資料 ----------
@@ -139,8 +143,11 @@ def prepare(stock_ids, dates):
 
 # ---------- 回測 ----------
 
-def run(data, member, dates, idle_cash=False):
+def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None):
+    """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
+    target_util：已投入 + 預留加碼額度 不超過總資產此比例時才可新買（加碼額度優先保留）。"""
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
+    last_buy_n = -10 ** 9
     for n in range(1, len(dates)):
         t, p = dates[n], dates[n - 1]
         value_prev = cash + sum(pos["shares"] * data[s]["df"].at[p, "close"] for s, pos in positions.items()
@@ -178,6 +185,8 @@ def run(data, member, dates, idle_cash=False):
                     cash -= invest
         # 新進場
         free = MAX_SLOTS - len(positions)
+        if one_per_day:
+            free = min(free, 1) if n - last_buy_n > cooldown else 0
         if free > 0:
             cands = [(data[s]["yield"].at[p], s) for s in data
                      if s not in positions and s not in sold_today and member.get(s, pd.Series(False, index=dates)).at[p]
@@ -185,12 +194,19 @@ def run(data, member, dates, idle_cash=False):
             for _, sid in sorted(cands, reverse=True)[:free]:
                 budget = value_prev / MAX_SLOTS
                 invest = min(cash, budget * FIRST)
+                if target_util is not None:
+                    reserved = sum(q["budget"] * ADD * (len(ADD_STEPS) - q["adds"]) for q in positions.values())
+                    committed = (value_prev - cash) + reserved
+                    # 新部位會占用首買 + 自己的加碼額度
+                    if committed + budget > target_util * value_prev or cash - reserved < invest:
+                        break
                 if invest <= 0:
                     break
                 o = data[sid]["df"].at[t, "open"]
                 positions[sid] = {"start": t, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "low": o, "removed": False}
                 cash -= invest
+                last_buy_n = n
         # 每日市值
         value = cash
         for sid, pos in positions.items():
@@ -230,12 +246,15 @@ def main():
         print("缺資料略過：", ", ".join(skipped))
 
     rows, equities, all_trades = {}, {}, {}
-    runs = [(u, e, idle) for u, e in universes.items() for idle in (False, True)]
-    for uname, etfs, idle in runs:
+    variants = {"原版": {}, "閒置現金加碼": {"idle_cash": True}}
+    for cd in COOLDOWNS:
+        variants[f"一天一檔·冷卻{cd}日·水位80%"] = {"one_per_day": True, "cooldown": cd, "target_util": 0.8}
+    runs = [(u, e, v) for u, e in universes.items() for v in variants]
+    for base, etfs, vname in runs:
         member = membership(constituents[constituents["etf"].astype(str).isin(etfs)], dates)
         sub = {k: v for k, v in data.items() if k in member}
-        trades, equity = run(sub, member, dates, idle_cash=idle)
-        uname = f"{uname}{'（閒置現金加碼）' if idle else ''}"
+        trades, equity = run(sub, member, dates, **variants[vname])
+        uname = f"{base}｜{vname}"
         closed = trades[trades["出場"].notna()]
         rows[uname] = stats(equity) | {
             "股票池": len(sub), "筆數": len(trades), "已結案": len(closed),
@@ -246,11 +265,12 @@ def main():
             "資金使用率%": equity.attrs["資金使用率%"]}
         equities[uname] = equity
         all_trades[uname] = trades
-        trades.to_csv(RESULTS / f"portfolio_trades_{uname}.csv", index=False, encoding="utf-8-sig")
+        trades.to_csv(RESULTS / f"portfolio_trades_{uname.replace('｜', '_').replace('·', '_')}.csv",
+                      index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):
         loaded = load_prices(etf)
         if loaded:
-            px = loaded[0]["close"].reindex(equities["0050＋0056"].index).ffill().dropna()
+            px = loaded[0]["close"].reindex(next(iter(equities.values())).index).ffill().dropna()
             px = px / px.iloc[0]
             rows[f"{etf} 買進持有"] = stats(px)
             equities[f"{etf} 買進持有"] = px
@@ -263,8 +283,8 @@ def main():
     with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         print("【每年報酬%】\n", yearly.round(1).to_string(), "\n")
-        for uname, trades in all_trades.items():
-            print(f"【{uname} 交易明細】\n", trades.round(1).to_string(), "\n")
+        best = table.drop([i for i in table.index if "買進持有" in i])["年化%"].idxmax()
+        print(f"【年化最高：{best} 交易明細】\n", all_trades[best].round(1).to_string(), "\n")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """在殖利率 5% 策略上加「股價在 60 日均線之上才買」的濾網，比較有無差異（只做多）。
 
-濾網：無 / 收盤 > MA60 / MA60 上揚（MA60 > 20 日前的 MA60）/ 兩者皆是
+濾網：無 / 收盤 > MA60 / MA60 上揚（MA60 > 20 日前的 MA60）/ 兩者皆是 /
+      MA60 之上或 MA240 之下（只擋「跌破季線但仍在年線之上」的區間）
 加碼不受濾網影響（已持有部位照原規則加碼）。
 用法：python ma60_filter_study.py [代號]
 """
@@ -22,9 +23,10 @@ def main(stock_id="2382"):
     cheap = 100 * dps / raw_close >= 5
     start = df.index[0] + pd.Timedelta(days=int(WARMUP * 365.25 / 245))
     sigs, add = entries(df)
-    ma60 = sma(df["close"], 60)
+    ma60, ma240 = sma(df["close"], 60), sma(df["close"], 240)
     filters = {"無濾網": pd.Series(True, index=df.index), "股價>MA60": df["close"] > ma60,
-               "MA60上揚": ma60 > ma60.shift(20), "股價>MA60且上揚": (df["close"] > ma60) & (ma60 > ma60.shift(20))}
+               "MA60上揚": ma60 > ma60.shift(20), "股價>MA60且上揚": (df["close"] > ma60) & (ma60 > ma60.shift(20)),
+               "MA60上或MA240下": (df["close"] > ma60) | (df["close"] < ma240)}
 
     rows, details = {}, {}
     for ename in ("任一", "混合（布林KD位置＋價量引線時機）", "共振（目前版本）", "價量引線"):
@@ -39,7 +41,7 @@ def main(stock_id="2382"):
     table.round(2).to_csv(ROOT / "results" / f"{stock_id}_ma60_filter.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.max_rows", 60, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
-        for key in (("任一", "20%", "無濾網"), ("任一", "20%", "股價>MA60")):
+        for key in (("任一", "20%", "MA60上或MA240下"), ("價量引線", "20%", "MA60上或MA240下")):
             print(f"【{key}】")
             print(details[key].drop(columns=["達標日"]).round(1).to_string(), "\n")
 

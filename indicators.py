@@ -253,3 +253,45 @@ WICK_STRATEGIES = {
     "F3 ＋爆量＋位置（低檔下影／高檔上影）": f3_wick_volume_zone,
     "F4 ＋位置（不看量）": f4_wick_zone,
 }
+
+
+# ---------- 策略：G MACD × KD 組合 ----------
+# 原則：MACD 判斷趨勢方向，KD 抓進場時機。
+
+def g1_macd_kd(df):
+    """MACD 多方（DIF > DEA）時 KD 金叉買；KD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    return cross_up(k, d) & (dif > dea), cross_down(k, d)
+
+
+def g2_macd_kd_macd_exit(df):
+    """MACD 多方時 KD 金叉買；MACD 死叉賣（抱得比較久）。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    return cross_up(k, d) & (dif > dea), cross_down(dif, dea)
+
+
+def g3_zero_line_pullback(df):
+    """DIF 在零軸之上（中期多頭）、KD 在 50 以下金叉（拉回買點）；MACD 死叉賣。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    return cross_up(k, d) & (k < 50) & (dif > 0), cross_down(dif, dea)
+
+
+def g4_double_confirm(df):
+    """雙重確認：DIF > DEA 且 K > D 同時成立的第一天買；任一條件消失就賣。"""
+    dif, dea = macd(df["close"])
+    k, d = kd(df)
+    both = (dif > dea) & (k > d)
+    return both & ~both.shift(1, fill_value=False), ~both
+
+
+MACD_KD_STRATEGIES = {
+    "A3 MACD 交叉（單獨）": a3_macd,
+    "B1 KD 低檔金叉/高檔死叉（單獨）": b1_kd,
+    "G1 MACD 多方＋KD 金叉買／KD 死叉賣": g1_macd_kd,
+    "G2 MACD 多方＋KD 金叉買／MACD 死叉賣": g2_macd_kd_macd_exit,
+    "G3 DIF>0＋KD<50 金叉買／MACD 死叉賣": g3_zero_line_pullback,
+    "G4 雙重確認買／任一轉弱賣": g4_double_confirm,
+}

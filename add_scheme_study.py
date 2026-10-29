@@ -7,8 +7,9 @@
 新案：首買 50%，跌 10/20/30% 加碼 25% / 15% / 10%（先多後少）
 另附：首買 40%，跌 15/30% 各加碼 20%（只用到 80% 額度）、不加碼（首買 100%）
 跌幅以首次買價計算。加碼時機：
-  當天：跌到門檻的當天須同時出現加碼訊號
-  觸發後：收盤曾跌到門檻即觸發，之後任何一天出現加碼訊號就加碼（股價回升也照加）
+  仍在門檻下：出現加碼訊號當天，收盤仍須在加碼門檻之下（反彈回門檻之上就不加）
+  仍低於首買價：收盤曾跌到門檻即觸發，之後出現訊號且收盤仍低於首次買價就加
+  觸發後都加：收盤曾跌到門檻即觸發，之後任何一天出現加碼訊號就加碼（股價回升也照加）
 加碼訊號：價量引線（爆量長下影線或爆量長紅）／ 任一技術買點
 用法：python add_scheme_study.py [代號]
 """
@@ -37,7 +38,8 @@ def main(stock_id="2382"):
     start = df.index[0] + pd.Timedelta(days=int(WARMUP * 365.25 / 245))
     vs, add = versions(df, stock_id)
     triggers = {"價量引線": add, "任一買點": entries(df)[0]["任一"]}
-    combos = [("當天", "same_day", "價量引線"), ("觸發後", "armed", "價量引線"), ("觸發後", "armed", "任一買點")]
+    combos = [("仍在門檻下", "same_day", "價量引線"), ("仍低於首買價", "armed_below_first", "價量引線"),
+              ("觸發後都加", "armed", "價量引線"), ("觸發後都加", "armed", "任一買點")]
     rows = {}
     for sname, (first, add_amt, steps) in SCHEMES.items():
         tes.FIRST, tes.ADD, tes.ADD_STEPS, tes.MAX_ADDS = first, add_amt, steps, len(steps)

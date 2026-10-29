@@ -4,15 +4,16 @@
 被踢出成分股：不再新進場；已持有的部位照原邏輯加碼與出場（獲利 20% 賣出）。
 單檔邏輯（同 strategy_a.py）：
   預估殖利率 >= 5%（EPS 法）＋ 技術買點任一 → 隔天開盤買進
-  每檔額度 = 進場當時總資產 / 5；首次買額度的 40%，下跌 10/20/30% 且爆量下影線/長紅各加碼 20%
+  每檔額度 = 進場當時總資產 / 5；首次買額度的 50%；收盤曾跌到首買價 -15% / -30% 後，
+  出現爆量長下影線或爆量長紅且收盤仍低於首買價，分別加碼額度的 30% / 20%
   收盤較平均成本獲利 >= 20% → 隔天開盤全部賣出；不停損
 同一天有多檔訊號而空位不夠：依預估殖利率高到低挑選。
 一天一檔＋冷卻期＋資金水位 80%（測試 COOLDOWNS 各種天數）：每天最多新買 1 檔（殖利率最高），
   之後 N 個交易日內不新買。水位有兩種解讀：
   解讀一（committed）：新買前先保留各檔未用的加碼額度，「已投入＋預留加碼＋新部位額度」<= 80%，
-           首買仍為額度 40%（總資產 8%），最多 4 檔，實際投入通常遠低於 80%。
+           首買為額度 50%（總資產 10%），最多 4 檔，實際投入通常遠低於 80%。
   解讀二（invested）：實際持股市值 <= 80%，首買放大為額度 80%（總資產 16%），5 檔約 80%；
-           剩下 20% 現金給加碼（每次總資產 4%），先觸發先用、用完就不再加碼。
+           剩下 20% 現金給加碼（總資產 6% / 4%），先觸發先用、用完就不再加碼。
 閒置現金加碼（idle_cash=True 時）：持股滿 5 檔時，觸發加碼的那一檔除了原本 20% 額度，
   再多投入「閒置現金 / 持有檔數」；閒置現金 = 現金 − 各檔尚未用掉的加碼額度。
 預估股利（適用年配、半年配、季配）：
@@ -36,7 +37,9 @@ from yield_entry_study import entries
 from yield_study import REPORT_DEADLINE
 
 UNI = ROOT / "data" / "universe"
-MAX_SLOTS, FIRST, ADD, ADD_STEPS, TARGET, MIN_YIELD = 5, 0.4, 0.2, (-0.10, -0.20, -0.30), 0.20, 5.0
+MAX_SLOTS, TARGET, MIN_YIELD = 5, 0.20, 5.0
+# 加碼方式同 strategy_a：首買 50%；曾跌到 -15% / -30% 後，出現爆量下影線/長紅且收盤仍低於首買價，加碼 30% / 20%
+FIRST, ADDS, ADD_STEPS = 0.50, (0.30, 0.20), (-0.15, -0.30)
 START = pd.Timestamp("2017-01-01")
 COOLDOWNS = (0, 3, 5, 7, 10, 15, 20, 30)
 
@@ -178,11 +181,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 continue
             in_index = member.get(sid, pd.Series(False, index=dates)).at[p]
             pos["removed"] |= not in_index
-            if (pos["adds"] < len(ADD_STEPS) and d["add"].at[p]
-                    and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["adds"]]):
-                invest = pos["budget"] * ADD
+            while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
+                pos["hit"] += 1
+            if pos["adds"] < pos["hit"] and d["add"].at[p] and c_prev < pos["first"]:
+                invest = pos["budget"] * ADDS[pos["adds"]]
                 if idle_cash and len(positions) >= MAX_SLOTS:
-                    reserved = sum(q["budget"] * ADD * (len(ADD_STEPS) - q["adds"]) for q in positions.values())
+                    reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)
                 invest = min(cash, invest)
                 if invest > 0:
@@ -202,7 +206,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 budget = value_prev / MAX_SLOTS
                 invest = min(cash, budget * first)
                 if target_util is not None and util_mode == "committed":
-                    reserved = sum(q["budget"] * ADD * (len(ADD_STEPS) - q["adds"]) for q in positions.values())
+                    reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     committed = (value_prev - cash) + reserved
                     # 新部位會占用首買 + 自己的加碼額度
                     if committed + budget > target_util * value_prev or cash - reserved < invest:
@@ -214,7 +218,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     break
                 o = data[sid]["df"].at[t, "open"]
                 positions[sid] = {"start": t, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
-                                  "budget": budget, "adds": 0, "low": o, "removed": False}
+                                  "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False}
                 cash -= invest
                 last_buy_n = n
         # 每日市值

@@ -199,7 +199,8 @@ def run(data, member, dates):
         trades.append({"代號": sid, "進場": pos["start"], "出場": None, "加碼": pos["adds"], "被踢出": pos["removed"],
                        "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
                        "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - pos["start"]).days})
-    return pd.DataFrame(trades), pd.Series(equity, index=dates[1:])
+    cols = ["代號", "進場", "出場", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日"]
+    return pd.DataFrame(trades, columns=cols), pd.Series(equity, index=dates[1:])
 
 
 def stats(equity):

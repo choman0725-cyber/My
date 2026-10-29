@@ -211,7 +211,7 @@ def stats(equity):
 
 
 def main():
-    constituents = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str})
+    constituents = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= START - pd.Timedelta(days=5)]).sort_values()
     universes = {"0050＋0056": ("0050", "0056"), "只看0050": ("0050",), "只看0056": ("0056",)}

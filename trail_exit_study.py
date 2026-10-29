@@ -60,7 +60,8 @@ def run(df, buy, add_trigger, start, end, target, tech_exit=None, add_mode="same
                         (add_mode == "same_day" and pos["adds"] < MAX_ADDS
                          and c[p] / pos["first"] - 1 <= ADD_STEPS[pos["adds"]])
                         or (add_mode == "armed" and pos["adds"] < pos["hit"])):
-                    invest = min(cash, pos["base"] * ADD)
+                    amount = ADD[pos["adds"]] if isinstance(ADD, (tuple, list)) else ADD
+                    invest = min(cash, pos["base"] * amount)
                     pos["shares"] += invest * (1 - BUY_COST) / o[i]
                     pos["cost"] += invest
                     pos["adds"] += 1

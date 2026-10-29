@@ -1,9 +1,10 @@
 """殖利率法 × 技術進場 × 分批加碼（只做多）。
 
-預估殖利率 = 預估現金股利 / 當日收盤價（未調整價）
-  預估現金股利：
-    - 今年已有 3 個月以上營收（4/10 之後）：去年度股利 × 今年累計營收 / 去年同期累計營收
-    - 1/1～4/9：若去年度股利已公告就用實際值；否則用去年度股利前一年 × 去年全年營收成長
+預估殖利率 = 下一次會領到的現金股利 / 當日收盤價（未調整價）
+  下一次會領到的股利 = 除息日還沒到的最早一個年度：
+    - 該年度股利已公告（AnnouncementDate <= 當日）→ 直接用公告值
+    - 尚未公告 → 前一年度股利 × 該年度已公布月營收累計 / 前一年度同期累計
+  月營收以次月 10 日視為公布日，避免偷看未來。
 進場：預估殖利率 >= 5%，且出現技術買進訊號（final_strategy.signals）
 資金：首次 40%，之後每次加碼 20%（= 首次的 50%），最多加碼 3 次
 加碼：收盤較首次進場價下跌 10% / 20% / 30%，且當天出現爆量長下影線或爆量長紅
@@ -81,9 +82,77 @@ def summary(trades, equity):
             "最大回撤%": 100 * (equity / equity.cummax() - 1).min()}
 
 
-if __name__ == "__main__":
-    df = load("2382")
+def dividend_table(stock_id):
+    div = pd.read_csv(ROOT / "data" / f"{stock_id}_dividend.csv")
+    res = pd.read_csv(ROOT / "data" / f"{stock_id}_dividend_result.csv", parse_dates=["date"])
+    div["fy"] = div["year"].str.extract(r"(\d+)")[0].astype(int) + 1911
+    div["cash"] = div["CashEarningsDistribution"] + div["CashStatutorySurplus"]
+    div["announced"] = pd.to_datetime(div["AnnouncementDate"])
+    div["ex_date"] = pd.to_datetime(div["CashExDividendTradingDate"])
+    table = div[["fy", "cash", "announced", "ex_date"]]
+    # 股利政策缺漏的年度，用除權息結果補（公告日不明，保守視為除息日當天才知道）
+    res["fy"] = res["date"].dt.year - 1
+    missing = res[~res["fy"].isin(table["fy"])]
+    extra = pd.DataFrame({"fy": missing["fy"], "cash": missing["stock_and_cache_dividend"],
+                          "announced": missing["date"], "ex_date": missing["date"]})
+    return pd.concat([table, extra]).sort_values("fy").set_index("fy")
+
+
+def forward_dividend(df, stock_id):
+    div = dividend_table(stock_id)
+    rev = pd.read_csv(ROOT / "data" / f"{stock_id}_revenue.csv")
+    rev["published"] = pd.to_datetime(dict(year=rev["revenue_year"], month=rev["revenue_month"], day=1)) \
+        + pd.DateOffset(months=1, days=9)
+    out = pd.Series(np.nan, index=df.index)
+    source = pd.Series("", index=df.index)
+    for t in df.index:
+        pending = div[div["ex_date"] > t]
+        fy = pending.index.min() if len(pending) else div.index.max() + 1
+        if fy in div.index and div.loc[fy, "announced"] <= t:
+            out[t], source[t] = div.loc[fy, "cash"], "已公告"
+            continue
+        if fy - 1 not in div.index:
+            continue
+        known = rev[(rev["published"] <= t) & (rev["revenue_year"] == fy)]
+        if known.empty:
+            continue
+        months = known["revenue_month"]
+        prev = rev[(rev["revenue_year"] == fy - 1) & rev["revenue_month"].isin(months)]
+        out[t] = div.loc[fy - 1, "cash"] * known["revenue"].sum() / prev["revenue"].sum()
+        source[t] = f"推估({len(months)}個月)"
+    return out, source
+
+
+def main(stock_id="2382"):
+    df = load(stock_id)
+    raw_close = pd.read_csv(ROOT / "data" / f"{stock_id}.csv", parse_dates=["date"]).set_index("date")["close"]
+    dps, source = forward_dividend(df, stock_id)
+    yld = 100 * dps / raw_close
     buy, _ = signals(df)
     t = pv_triggers(df)
-    tr, eq = run_multi(df, buy, t["wick_buy"] | t["pv_buy"], df.index[120], df.index[-1])
-    print(summary(tr, eq)); print(tr.round(1).to_string())
+    add = t["wick_buy"] | t["pv_buy"]
+    start = df.index[0] + pd.Timedelta(days=int(WARMUP * 365.25 / 245))
+
+    pd.DataFrame({"收盤": raw_close, "預估股利": dps.round(2), "來源": source, "預估殖利率%": yld.round(2)}) \
+        .to_csv(ROOT / "results" / f"{stock_id}_forward_yield.csv", encoding="utf-8-sig")
+    yearly = yld[start:].groupby(yld[start:].index.year).agg(["min", "median", "max"]).round(1)
+    yearly["殖利率>=5%天數"] = (yld[start:] >= 5).groupby(yld[start:].index.year).sum()
+
+    rows, details = {}, {}
+    for th in (None, 3, 4, 5):
+        b = buy if th is None else buy & (yld >= th)
+        name = "不看殖利率" if th is None else f"殖利率>={th}%"
+        tr, eq = run_multi(df, b, add, start, df.index[-1])
+        rows[name] = summary(tr, eq)
+        details[name] = tr
+        tr.to_csv(ROOT / "results" / f"{stock_id}_yield_{th or 'none'}_trades.csv", index=False, encoding="utf-8-sig")
+    with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
+        print("【每年預估殖利率%】\n", yearly.to_string(), "\n")
+        print(pd.DataFrame(rows).T.round(1).to_string(), "\n")
+        for name in ("殖利率>=5%", "殖利率>=4%"):
+            print(f"【{name} 交易明細】")
+            print(details[name].to_string(), "\n")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else "2382")

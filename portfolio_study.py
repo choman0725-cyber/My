@@ -7,9 +7,12 @@
   每檔額度 = 進場當時總資產 / 5；首次買額度的 40%，下跌 10/20/30% 且爆量下影線/長紅各加碼 20%
   收盤較平均成本獲利 >= 20% → 隔天開盤全部賣出；不停損
 同一天有多檔訊號而空位不夠：依預估殖利率高到低挑選。
-一天一檔＋冷卻期＋資金水位（測試 COOLDOWNS 各種天數）：每天最多新買 1 檔（殖利率最高），
-  之後 N 個交易日內不新買；新買前先保留各檔未用的加碼額度，且「已投入＋預留加碼＋新部位額度」
-  不超過總資產 80%，所以不一定會買滿 5 檔。
+一天一檔＋冷卻期＋資金水位 80%（測試 COOLDOWNS 各種天數）：每天最多新買 1 檔（殖利率最高），
+  之後 N 個交易日內不新買。水位有兩種解讀：
+  解讀一（committed）：新買前先保留各檔未用的加碼額度，「已投入＋預留加碼＋新部位額度」<= 80%，
+           首買仍為額度 40%（總資產 8%），最多 4 檔，實際投入通常遠低於 80%。
+  解讀二（invested）：實際持股市值 <= 80%，首買放大為額度 80%（總資產 16%），5 檔約 80%；
+           剩下 20% 現金給加碼（每次總資產 4%），先觸發先用、用完就不再加碼。
 閒置現金加碼（idle_cash=True 時）：持股滿 5 檔時，觸發加碼的那一檔除了原本 20% 額度，
   再多投入「閒置現金 / 持有檔數」；閒置現金 = 現金 − 各檔尚未用掉的加碼額度。
 預估股利（適用年配、半年配、季配）：
@@ -143,9 +146,13 @@ def prepare(stock_ids, dates):
 
 # ---------- 回測 ----------
 
-def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None):
+def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
+        util_mode="committed", first=FIRST):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
-    target_util：已投入 + 預留加碼額度 不超過總資產此比例時才可新買（加碼額度優先保留）。"""
+    target_util 搭配 util_mode：
+      committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
+      invested ：已投入股票市值 + 新部位首買金額 <= 總資產 × target_util（剩下現金給加碼，先到先用）
+    first：首買占單檔額度（總資產/5）的比例。"""
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
     for n in range(1, len(dates)):
@@ -193,12 +200,15 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                      and data[s]["buy"].at[p] and pd.notna(data[s]["df"].at[t, "open"])]
             for _, sid in sorted(cands, reverse=True)[:free]:
                 budget = value_prev / MAX_SLOTS
-                invest = min(cash, budget * FIRST)
-                if target_util is not None:
+                invest = min(cash, budget * first)
+                if target_util is not None and util_mode == "committed":
                     reserved = sum(q["budget"] * ADD * (len(ADD_STEPS) - q["adds"]) for q in positions.values())
                     committed = (value_prev - cash) + reserved
                     # 新部位會占用首買 + 自己的加碼額度
                     if committed + budget > target_util * value_prev or cash - reserved < invest:
+                        break
+                if target_util is not None and util_mode == "invested":
+                    if (value_prev - cash) + invest > target_util * value_prev + 1e-12:
                         break
                 if invest <= 0:
                     break
@@ -248,7 +258,9 @@ def main():
     rows, equities, all_trades = {}, {}, {}
     variants = {"原版": {}, "閒置現金加碼": {"idle_cash": True}}
     for cd in COOLDOWNS:
-        variants[f"一天一檔·冷卻{cd}日·水位80%"] = {"one_per_day": True, "cooldown": cd, "target_util": 0.8}
+        variants[f"解讀一·冷卻{cd}日"] = {"one_per_day": True, "cooldown": cd, "target_util": 0.8}
+        variants[f"解讀二·冷卻{cd}日"] = {"one_per_day": True, "cooldown": cd, "target_util": 0.8,
+                                       "util_mode": "invested", "first": 0.8}
     runs = [(u, e, v) for u, e in universes.items() for v in variants]
     for base, etfs, vname in runs:
         member = membership(constituents[constituents["etf"].astype(str).isin(etfs)], dates)

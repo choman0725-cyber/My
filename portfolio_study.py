@@ -342,6 +342,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if pos["shares"] <= 1e-12:
                 positions.pop(sid)
 
+    realized = [0.0]   # 本結算期已實現損益（settle 補虧模式用）
+
     def log(n, sid, action, price, shares_delta, amount, note=""):
         if ledger is None:
             return
@@ -356,6 +358,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         pos = positions.pop(sid)
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
+        realized[0] += proceeds - pos["cost"]
         log(n, sid, "賣出", price, -pos["shares"], proceeds, f"{reason}；成本 {pos['cost']:.4f}，損益 {100 * (proceeds / pos['cost'] - 1):+.1f}%")
         if offset_loss and reason == "停利":
             pending_offsets.append((proceeds - pos["cost"]) * offset_frac)
@@ -384,6 +387,26 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         has_cand = (not need_candidate) or any(
             data[s_]["buy"][p] and mem.get(s_, no)[p] and s_ not in positions and not np.isnan(data[s_]["open"][n])
             for s_ in data)
+        if settle and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
+            if settle[1].startswith("offset"):
+                # 補虧結算：先賣有賺的（offset_target 只賣達停利門檻的），再用本期累計已實現獲利去認列虧損部位，
+                # 虧損由小到大（offset_big：由大到小）逐檔檢查，認列後本期合計仍 >= 0 才賣；其餘續抱。
+                gains = {}
+                for s_, q in positions.items():
+                    o_, c_ = data[s_]["open"][n], data[s_]["close"][p]
+                    if not (np.isnan(o_) or np.isnan(c_)):
+                        gains[s_] = (c_ * (1 - SELL_COST) / (q["cost"] / q["shares"]) - 1, (c_ * (1 - SELL_COST) - q["cost"] / q["shares"]) * q["shares"], o_)
+                win_min = TARGET if settle[1] == "offset_target" else 0.0
+                for s_, (g_, pl, o_) in gains.items():
+                    if g_ >= win_min:
+                        close_out(s_, n, o_, f"定期結算·獲利{g_:+.0%}")
+                        sold_today.add(s_)
+                losers = sorted([(pl, s_, o_) for s_, (g_, pl, o_) in gains.items() if g_ < 0], reverse=(settle[1] == "offset_big"))
+                for pl, s_, o_ in losers:
+                    if realized[0] + pl >= 0:
+                        close_out(s_, n, o_, f"定期結算·補虧{pl:+.4f}")
+                        sold_today.add(s_)
+            realized[0] = 0.0
         for sid in list(positions):
             if sid not in positions:
                 continue
@@ -395,7 +418,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             o, c_prev = d["open"][n], d["close"][p]
             if np.isnan(o) or np.isnan(c_prev):
                 continue
-            if settle and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
+            if settle and not settle[1].startswith("offset") and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
                 g_ = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1
                 if settle[1] == "all" or (settle[1] == "profit" and g_ > 0) or (settle[1] == "target" and g_ >= TARGET):
                     close_out(sid, n, o, f"定期結算({settle[0]}個月)")

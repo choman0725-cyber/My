@@ -20,6 +20,7 @@
 用法：python short_yield_study.py            # 全部
       python short_yield_study.py targets    # 只跑停利掃描
       python short_yield_study.py hold       # 只跑持有上限掃描（10～45 個交易日）
+      python short_yield_study.py add        # 只跑逆勢加碼一次（漲 5% 加碼）
 輸出：results/short_yield_*.csv、results/short_yield_study.log
 """
 import time
@@ -110,6 +111,77 @@ def cover_signal(d, rname, regimes, flip):
     return pd.Series(False, index=idx)
 
 
+# ---------- 加碼版放空引擎（每檔獨立） ----------
+
+def run_short_add(df, short, cover, start, end, tp=TARGET, first=1.0, add_at=None, add_frac=0.0, max_days=None,
+                  force=None, block=None):
+    """同 short_study.run_short，但支援一次逆勢加碼：收盤較首空價漲 add_at 後，隔天開盤加碼 add_frac×權益。
+    停利、斷頭都以「平均放空價」計。首空名目＝first×權益。"""
+    idx = np.flatnonzero((df.index >= start) & (df.index <= end))
+    dates = df.index
+    o, c = df["open"].values, df["close"].values
+    short = short.reindex(dates).fillna(False).to_numpy(dtype=bool)
+    cover = cover.reindex(dates).fillna(False).to_numpy(dtype=bool)
+    force = force.reindex(dates).fillna(False).to_numpy(dtype=bool) if force is not None else np.zeros(len(df), bool)
+    block = block.reindex(dates).fillna(False).to_numpy(dtype=bool) if block is not None else np.zeros(len(df), bool)
+    chg = df["close"].pct_change().to_numpy()
+    trades, equity, eq, pos = [], [], 1.0, None
+    for n, i in enumerate(idx):
+        if n > 0:
+            prev = idx[n - 1]
+            if pos is None:
+                ok = short[prev] and not block[i]
+                if ok and chg[prev] <= UPTICK_DROP and o[i] < c[prev]:
+                    ok = False
+                if ok:
+                    N = first * eq / o[i]
+                    pos = {"i0": i, "p0": o[i], "legs": [(i, o[i], N)], "N": N, "eq0": eq, "exit": None, "pending_add": False, "added": False}
+            elif pos["exit"]:
+                px = o[i]
+                pnl = sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - px * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (dates[i] - dates[ik]).days / 365
+                          for ik, pk, Nk in pos["legs"])
+                eq = max(pos["eq0"] + pnl, 1e-9)
+                avg = sum(pk * Nk for _, pk, Nk in pos["legs"]) / pos["N"]
+                trades.append((dates[pos["i0"]], pos["p0"], avg, dates[i], px, eq / pos["eq0"] - 1, i - pos["i0"], pos["exit"], int(pos["added"])))
+                pos = None
+            elif pos["pending_add"] and not block[i]:
+                N2 = add_frac * pos["eq0"] / o[i]
+                pos["legs"].append((i, o[i], N2)); pos["N"] += N2; pos["added"] = True; pos["pending_add"] = False
+        if pos is not None:
+            pnl = sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - c[i] * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (dates[i] - dates[ik]).days / 365
+                      for ik, pk, Nk in pos["legs"])
+            avg = sum(pk * Nk for _, pk, Nk in pos["legs"]) / pos["N"]
+            ret = c[i] / avg - 1
+            reason = None
+            if cover[i]:
+                reason = "訊號"
+            if max_days is not None and i - pos["i0"] + 1 >= max_days:
+                reason = "到期"
+            if ret <= -tp:
+                reason = "停利"
+            if ret >= MARGIN_CALL:
+                reason = "斷頭"
+            if force[i]:
+                reason = "強制回補"
+            pos["exit"] = reason
+            if add_at is not None and not pos["added"] and reason is None and c[i] / pos["p0"] - 1 >= add_at:
+                pos["pending_add"] = True
+            equity.append(max(pos["eq0"] + pnl, 1e-9))
+        else:
+            equity.append(eq)
+    if pos is not None:
+        i = idx[-1]
+        pnl = sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - c[i] * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (dates[i] - dates[ik]).days / 365
+                  for ik, pk, Nk in pos["legs"])
+        eq = max(pos["eq0"] + pnl, 1e-9)
+        avg = sum(pk * Nk for _, pk, Nk in pos["legs"]) / pos["N"]
+        trades.append((dates[pos["i0"]], pos["p0"], avg, dates[i], c[i], eq / pos["eq0"] - 1, i - pos["i0"], "期末", int(pos["added"])))
+        equity[-1] = eq
+    T = pd.DataFrame(trades, columns=["entry_date", "entry_price", "avg_price", "exit_date", "exit_price", "return", "bars", "reason", "added"])
+    T["days"] = (pd.to_datetime(T["exit_date"]) - pd.to_datetime(T["entry_date"])).dt.days
+    return T, pd.Series(equity, index=dates[idx])
+
+
 # ---------- A. 每檔獨立 ----------
 
 def per_trade(data, regimes, log):
@@ -154,7 +226,8 @@ def per_trade(data, regimes, log):
 
 # ---------- B. 5 檔組合 ----------
 
-def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET, max_days=None):
+def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET, max_days=None,
+                  first=1.0, add_at=None, add_frac=0.0):
     """名目＝進場時總資產 ÷ slots；最多 slots 檔；同日多檔依殖利率低到高。回傳 (交易, 每日權益)。"""
     span = dates[dates >= UNIVERSE_START]
     arr = {}
@@ -180,10 +253,19 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
                 a = arr[sid]
                 px = a["open"][n] if not np.isnan(a["open"][n]) else a["close_ff"][n - 1]
                 days = (span[n] - span[p["n0"]]).days
-                pnl = p["proceeds"] - p["N"] * px * (1 + BUY_COST) - p["N"] * p["p0"] * BORROW_RATE * days / 365
+                pnl = sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - px * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (span[n] - span[nk]).days / 365
+                          for nk, pk, Nk in p["legs"])
                 eq += pnl
-                trades.append((sid, data[sid]["name"], span[p["n0"]], p["p0"], span[n], px, pnl * capital, pnl / p["notional"], days, p["exit"]))
+                trades.append((sid, data[sid]["name"], span[p["n0"]], p["p0"], span[n], px, pnl * capital, pnl / p["notional"], days,
+                               p["exit"] + ("（已加碼）" if len(p["legs"]) > 1 else "")))
                 del pos[sid]
+            # 1b. 加碼（前一天收盤較首空價漲 add_at；名目 add_frac×進場時總資產）
+            for sid, p in pos.items():
+                a = arr[sid]
+                if p.get("pending_add") and not a["block"][n] and not np.isnan(a["open"][n]):
+                    N2 = add_frac * p["eq_entry"] / a["open"][n]
+                    p["legs"].append((n, a["open"][n], N2)); p["N"] += N2; p["notional"] += add_frac * p["eq_entry"]
+                    p["pending_add"] = False
             # 2. 進場（前一天收盤訊號；依殖利率低到高）
             cands = []
             for sid, a in arr.items():
@@ -194,18 +276,19 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
                 cands.append((a["yield"][n - 1] if not np.isnan(a["yield"][n - 1]) else 99, sid))
             for _, sid in sorted(cands)[: max(0, slots - len(pos))]:
                 a = arr[sid]
-                notional = eq / slots
+                notional = first * eq / slots
                 N = notional / a["open"][n]
-                pos[sid] = {"n0": n, "p0": a["open"][n], "N": N, "notional": notional,
-                            "proceeds": N * a["open"][n] * (1 - SELL_COST - SHORT_FEE), "exit": None}
+                pos[sid] = {"n0": n, "p0": a["open"][n], "N": N, "notional": notional, "legs": [(n, a["open"][n], N)],
+                            "eq_entry": eq / slots, "exit": None, "pending_add": False}
         # 3. 收盤：評價與決策
         mark = eq
         for sid, p in pos.items():
             a = arr[sid]
             c = a["close_ff"][n]
-            days = (span[n] - span[p["n0"]]).days
-            mark += p["proceeds"] - p["N"] * c * (1 + BUY_COST) - p["N"] * p["p0"] * BORROW_RATE * days / 365
-            ret = c / p["p0"] - 1
+            mark += sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - c * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (span[n] - span[nk]).days / 365
+                        for nk, pk, Nk in p["legs"])
+            avg = sum(pk * Nk for _, pk, Nk in p["legs"]) / p["N"]
+            ret = c / avg - 1
             reason = None
             if a["cover"][n]:
                 reason = "轉多回補"
@@ -220,6 +303,8 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
             if n + 1 >= a["delist_n"]:
                 reason = "下市"
             p["exit"] = reason
+            if add_at is not None and len(p["legs"]) == 1 and reason is None and c / p["p0"] - 1 >= add_at:
+                p["pending_add"] = True
         equity.append(max(mark, 1e-9))
     # 期末
     n = len(span) - 1
@@ -227,7 +312,8 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
         a = arr[sid]
         c = a["close_ff"][n]
         days = (span[n] - span[p["n0"]]).days
-        pnl = p["proceeds"] - p["N"] * c * (1 + BUY_COST) - p["N"] * p["p0"] * BORROW_RATE * days / 365
+        pnl = sum(Nk * (pk * (1 - SELL_COST - SHORT_FEE) - c * (1 + BUY_COST)) - Nk * pk * BORROW_RATE * (span[n] - span[nk]).days / 365
+                  for nk, pk, Nk in p["legs"])
         eq += pnl
         trades.append((sid, data[sid]["name"], span[p["n0"]], p["p0"], span[n], c, pnl * capital, pnl / p["notional"], days, "期末"))
     equity[-1] = max(eq, 1e-9)
@@ -380,6 +466,68 @@ def hold_scan(data, dates, regimes, log,
     return S, PP
 
 
+# ---------- E. 逆勢加碼一次 ----------
+
+ADD_SCHEMES = {"不加碼（首空100%）": (1.0, None, 0.0), "首空50%＋漲5%加碼50%": (0.5, 0.05, 0.5),
+               "首空100%＋漲5%加碼100%": (1.0, 0.05, 1.0)}
+
+
+def add_scan(data, dates, regimes, log, combos=(("殖利率<2%", "空頭排列"), ("殖利率<1.5%", "空頭排列")), caps=(None, 20)):
+    """停利 5%（以平均放空價計）、不轉多就補、不停損；逆勢加碼一次 × 持有上限。"""
+    years = (max(d["df"].index[-1] for d in data.values()) - UNIVERSE_START).days / 365.25
+    rows, prow, all_t = {}, {}, []
+    for yname, rname_s in combos:
+        y_th, rname = YIELDS[yname], REGIMES[rname_s]
+        for sname, (first, add_at, add_frac) in ADD_SCHEMES.items():
+            for md in caps:
+                hname = "無上限" if md is None else f"{md}日"
+                tr = []
+                for sid, d in data.items():
+                    sig = entry_signal(d, y_th, rname, regimes)
+                    if not sig.any():
+                        continue
+                    t, _ = run_short_add(d["df"], sig, cover_signal(d, rname, regimes, False), d["start"], d["df"].index[-1],
+                                         tp=TARGET, first=first, add_at=add_at, add_frac=add_frac, max_days=md, force=d["force"], block=d["block"])
+                    if len(t):
+                        tr.append(t.assign(stock_id=sid))
+                T = pd.concat(tr, ignore_index=True)
+                r = T["return"]  # 以權益計：首空 50% 的報酬率是對整個 1/5 名目
+                wins, losses = r[r > 0], r[r <= 0]
+                T["年"] = T["entry_date"].dt.year
+                key = (yname, sname, hname)
+                rows[key] = {
+                    "筆數": len(r), "加碼筆數": int(T["added"].sum()), "勝率%": 100 * (r > 0).mean(), "每筆期望值%": 100 * r.mean(),
+                    "平均獲利%": 100 * wins.mean(), "平均虧損%": 100 * losses.mean() if len(losses) else 0,
+                    "獲利因子": wins.sum() / -losses.sum() if len(losses) and losses.sum() < 0 else np.nan,
+                    "平均天數": T["days"].mean(), "停利／到期／強制／斷頭": "／".join(str(int((T["reason"] == k).sum())) for k in ("停利", "到期", "強制回補", "斷頭")),
+                    "加碼那些勝率%": 100 * (T[T["added"] == 1]["return"] > 0).mean() if T["added"].any() else np.nan,
+                    "加碼那些每筆%": 100 * T[T["added"] == 1]["return"].mean() if T["added"].any() else np.nan,
+                    "最差一筆%": 100 * r.min(), "每檔每年貢獻%": 100 * r.sum() / T["stock_id"].nunique() / years,
+                    "前段每筆%": 100 * T[T["年"] <= 2023]["return"].mean(), "後段每筆%": 100 * T[T["年"] >= 2024]["return"].mean(),
+                }
+                all_t.append(T.assign(殖利率=yname, 加碼=sname, 持有上限=hname))
+                P, eq = run_portfolio(data, dates, regimes, y_th, rname, False, target=TARGET, max_days=md, first=first, add_at=add_at, add_frac=add_frac)
+                yrs = (eq.index[-1] - eq.index[0]).days / 365.25
+                prow[key] = {
+                    "筆數": len(P), "加碼筆數": int(P["原因"].str.contains("已加碼").sum()), "勝率%": 100 * (P["報酬率"] > 0).mean(),
+                    "期末萬": eq.iloc[-1] * CAPITAL / 1e4, "IRR%": 100 * (eq.iloc[-1] ** (1 / yrs) - 1),
+                    "最大回撤%": 100 * (eq / eq.cummax() - 1).min(), "斷頭": int(P["原因"].str.startswith("斷頭").sum()),
+                    "最差一筆萬": P["損益元"].min() / 1e4, "總損益萬": P["損益元"].sum() / 1e4,
+                }
+    S = pd.DataFrame(rows).T
+    S.index.names = ["殖利率", "加碼", "持有上限"]
+    num = [c for c in S.columns if c != "停利／到期／強制／斷頭"]
+    S[num] = S[num].astype(float).round(2)
+    S.to_csv(RESULTS / "short_yield_add.csv", encoding="utf-8-sig")
+    pd.concat(all_t).to_csv(RESULTS / "short_yield_add_trades.csv", index=False, encoding="utf-8-sig")
+    PP = pd.DataFrame(prow).T.astype(float).round(1)
+    PP.index.names = ["殖利率", "加碼", "持有上限"]
+    PP.to_csv(RESULTS / "short_yield_add_portfolio.csv", encoding="utf-8-sig")
+    log("\n【E. 逆勢加碼一次（收盤較首空價漲 5% → 隔天開盤加碼；停利 5% 以平均放空價計）｜每檔獨立，報酬率以整個名目計】\n" + fmt(S))
+    log("\n【E. 逆勢加碼一次｜5 檔組合（500 萬；首空 50% 時每檔首空名目＝總資產 1/10）】\n" + fmt(PP))
+    return S, PP
+
+
 def main(argv=()):
     t0 = time.time()
     lines = []
@@ -399,6 +547,10 @@ def main(argv=()):
         ok = sum(((d["yield"] < y_th) & d["member"]).reindex(span).fillna(False).astype(int) for d in data.values())
         cnt[yname] = {"平均每天符合檔數": ok.mean(), "最少": ok.min(), "最多": ok.max()}
     log("\n各殖利率門檻下，成分股中符合的檔數（每天）：\n" + fmt(pd.DataFrame(cnt).T.round(1)))
+    if "add" in argv:
+        add_scan(data, dates, regimes, log)
+        (RESULTS / "short_yield_add.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if "hold" in argv:
         hold_scan(data, dates, regimes, log)
         (RESULTS / "short_yield_hold.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -411,6 +563,7 @@ def main(argv=()):
     portfolio(data, dates, regimes, log)
     target_scan(data, dates, regimes, log)
     hold_scan(data, dates, regimes, log)
+    add_scan(data, dates, regimes, log)
     log(f"\n總耗時 {time.time() - t0:.0f} 秒")
     (RESULTS / "short_yield_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

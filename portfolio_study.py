@@ -182,7 +182,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
-        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None):
+        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost"):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -211,6 +211,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
+    time_add_trap：定期加碼改成「套牢後才啟動」——收盤低於平均成本 30% 以上才開始計時（回到 -30% 以內就歸零重算），
+      連續套牢每滿 time_add_days 天、出現加碼訊號且收盤低於平均成本，才多一次加碼（額度 × time_add_amount）。
+    trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
       mode "all"＝全部出清重來，"profit"＝只賣有賺的，"target"＝只賣獲利已達停利門檻的（不管殖利率）。
     ledger：傳入 list 時，每一筆成交（買進／加碼／賣出／追加資金）都記一列：日期、代號、動作、價格、股數、金額、
@@ -514,13 +517,23 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
             avg_now = pos["cost"] / pos["shares"]
-            if (time_add_days and d["add"][p] and c_prev < avg_now
-                    and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0)):
+            if time_add_trap:
+                t0 = pos.get("trap_start")
+                due = (time_add_days and d["add"][p] and c_prev < avg_now and t0 is not None
+                       and (dates[p] - t0).days // time_add_days > pos.get("trap_adds", 0))
+            else:
+                due = (time_add_days and d["add"][p] and c_prev < avg_now
+                       and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0))
+            if due:
                 invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["budget"] * time_add_amount))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
-                    pos["time_adds"] = (dates[p] - dates[pos["start"]]).days // time_add_days
+                    if time_add_trap:
+                        pos["trap_adds"] = (dates[p] - pos["trap_start"]).days // time_add_days
+                        pos["time_adds"] = pos.get("time_adds", 0) + 1
+                    else:
+                        pos["time_adds"] = (dates[p] - dates[pos["start"]]).days // time_add_days
                     cash -= invest
                     log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"定期加碼第{pos['time_adds']}次（持有滿{time_add_days}天仍虧損）")
                     continue
@@ -595,11 +608,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if not np.isnan(d["low"][n]):
                 pos["low"] = min(pos["low"], d["low"][n])
             value += pos["shares"] * d["close_ff"][n]
-            trapped = d["close_ff"][n] < 0.7 * pos["cost"] / pos["shares"]
+            trapped = d["close_ff"][n] < 0.7 * (pos["first"] if trap_ref == "first" else pos["cost"] / pos["shares"])
             if trapped and pos.get("trap_start") is None:
                 pos["trap_start"] = dates[n]
             elif not trapped:
                 pos["trap_start"] = None
+                pos["trap_adds"] = 0
         equity.append(value)
         exposure.append(1 - cash / value if value > 0 else 0.0)
     for sid, pos in positions.items():

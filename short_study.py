@@ -110,7 +110,7 @@ def load_ex_dates(stock_id, single=False):
 # ---------- 放空引擎 ----------
 
 def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, trail=None, use_signal=True,
-              force=None, block=None, uptick=True, borrow=BORROW_RATE, flip=None, flip_gain=0.0):
+              force=None, block=None, uptick=True, borrow=BORROW_RATE, flip=None, flip_gain=0.0, flip_confirm=1):
     """flip：布林 Series，True＝盤勢已轉多；轉多且放空獲利 >= flip_gain 時回補（原因「轉多有賺」）。"""
     """回傳 (交易明細, 每日權益)。權益以 1.0 起算；放空名目＝進場時權益。"""
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
@@ -135,7 +135,7 @@ def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, t
                 if ok:
                     N = eq / o[i]
                     pos = {"i0": i, "p0": o[i], "N": N, "eq0": eq, "proceeds": N * o[i] * (1 - SELL_COST - SHORT_FEE),
-                           "low": c[i], "exit": None}
+                           "low": c[i], "exit": None, "streak": 0}
             elif pos["exit"]:
                 days = (dates[i] - dates[pos["i0"]]).days
                 eq = pos["eq0"] + pos["proceeds"] - pos["N"] * o[i] * (1 + BUY_COST) - pos["N"] * pos["p0"] * borrow * days / 365
@@ -151,7 +151,8 @@ def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, t
             reason = None
             if use_signal and cover[i]:
                 reason = "訊號"
-            if flip[i] and -ret >= flip_gain:
+            pos["streak"] = pos["streak"] + 1 if (flip[i] and -ret >= flip_gain) else 0
+            if pos["streak"] >= flip_confirm:
                 reason = "轉多有賺"
             if max_days is not None and i - pos["i0"] + 1 >= max_days:
                 reason = "到期"

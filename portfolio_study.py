@@ -172,7 +172,8 @@ def prepare(stock_ids, dates):
 # ---------- 回測 ----------
 
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
-        util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000):
+        util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
+        offset_frac=1.0, offset_only_stale=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -181,7 +182,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     股票下市／合併後沒有價格：在最後交易日的隔天，以最後收盤價結算出場（原因記為「下市結算」）。
     offset_loss（以盈補虧）：某檔停利賣出時，用這筆已實現獲利，同一天開盤平掉「已加碼過且仍虧損」
       部位的整數張（1 張 = 1000 股，依 capital 與原始股價換算），平掉的虧損不超過這筆獲利；
-      虧損幅度最大的先平，有剩再平下一檔。"""
+      虧損幅度最大的先平，有剩再平下一檔。
+    offset_frac：只拿獲利的這個比例去補虧（例如 0.5 = 一半）。
+    offset_only_stale：只處理「持有超過 1 年」或「虧損超過 30%」的部位。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
@@ -203,6 +206,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if sid in exclude or pos["adds"] < 1 or np.isnan(o):
                 continue
             avg = pos["cost"] / pos["shares"]
+            if offset_only_stale and not ((dates[n] - dates[pos["start"]]).days > 365 or o / avg - 1 < -0.30):
+                continue
             if o * (1 - SELL_COST) < avg:
                 losers.append((o / avg - 1, sid))
         for _, sid in sorted(losers):
@@ -241,7 +246,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
         if offset_loss and reason == "停利":
-            pending_offsets.append(proceeds - pos["cost"])
+            pending_offsets.append((proceeds - pos["cost"]) * offset_frac)
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": reason, "加碼": pos["adds"],
                        "投入": pos["cost"], "回收": proceeds,
                        "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),

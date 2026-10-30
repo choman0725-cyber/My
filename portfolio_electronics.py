@@ -1,7 +1,8 @@
 """只買電子股的組合回測：初始資金 500 萬，顯示期末資產、各檔交易與目前持股。
 
 電子股依證交所「電子工業」分類（半導體、電腦及週邊、光電、通信網路、電子零組件、電子通路、
-資訊服務、其他電子），從 0050 / 0056 歷年成分股中挑出（ELECTRONICS 清單）。
+資訊服務、其他電子），從 0050 / 0056 歷年成分股中挑出（ELECTRONICS 清單）；
+電信業者（中華電、台灣大、遠傳）與川湖不列入。
 其餘規則同 portfolio_study.py（A 版單檔邏輯、最多 5 檔、被踢出後不新進場）。
 用法：python portfolio_electronics.py
 """
@@ -21,19 +22,22 @@ ELECTRONICS = {
     # 電腦及週邊、光電
     "2301", "2324", "2352", "2353", "2357", "2362", "2376", "2377", "2382", "2395", "3005", "3231", "3706",
     "4938", "6669", "2356", "2409", "3008", "3481", "6116", "6176", "2451",
-    # 通信網路、電子零組件、電子通路、其他電子
-    "2345", "2412", "3045", "4904", "6285", "2439", "2308", "2327", "2368", "2383", "2385", "2392", "2474",
+    # 通信網路（不含電信業者中華電、台灣大、遠傳）、電子零組件、電子通路、其他電子（不含川湖）
+    "2345", "6285", "2439", "2308", "2327", "2368", "2383", "2385", "2392", "2474",
     "2492", "3017", "3023", "3037", "3044", "3189", "3653", "3665", "4958", "8046", "2347", "3036", "3702",
-    "2317", "2354", "2360", "2404", "2059",
+    "2317", "2354", "2360", "2404",
 }
-VARIANTS = {
-    "原版（最多5檔、首買總資產10%）": {},
-    "原版＋以盈補虧": {"offset_loss": True},
-    "解讀二·冷卻7日（實際投入≈80%）": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                                     "util_mode": "invested", "first": 0.8},
-    "解讀二·冷卻7日＋以盈補虧": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                               "util_mode": "invested", "first": 0.8, "offset_loss": True},
+BASES = {
+    "原版": {},
+    "解讀二·冷卻7日": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
 }
+OFFSETS = {
+    "": {},
+    "＋以盈補虧": {"offset_loss": True},
+    "＋以盈補虧(一半獲利)": {"offset_loss": True, "offset_frac": 0.5},
+    "＋以盈補虧(僅套1年或虧30%)": {"offset_loss": True, "offset_only_stale": True},
+}
+VARIANTS = {b + o: {**bk, **ok} for b, bk in BASES.items() for o, ok in OFFSETS.items()}
 
 
 def main():
@@ -65,7 +69,7 @@ def main():
                          "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
                          "資金使用率%": eq.attrs["資金使用率%"]}
             details[key] = tr
-            tr.to_csv(RESULTS / f"portfolio_electronics_{uname}_{vname.split('（')[0].replace('·', '_')}.csv",
+            tr.to_csv(RESULTS / f"portfolio_electronics_{uname}_{vname.replace('·', '_')}.csv",
                       index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):
         px = ps.load_prices(etf)[0]["close"].reindex(eq.index).ffill().dropna()
@@ -76,6 +80,8 @@ def main():
     with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for key, tr in details.items():
+            if "以盈補虧" in key:
+                continue
             hold = tr[tr["出場"].isna()].copy()
             hold["約股數"] = [int(m / raw_last[s]) for m, s in zip(hold["市值"], hold["代號"])]
             print(f"【{key}】目前持股")

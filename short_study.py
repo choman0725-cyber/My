@@ -110,7 +110,8 @@ def load_ex_dates(stock_id, single=False):
 # ---------- 放空引擎 ----------
 
 def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, trail=None, use_signal=True,
-              force=None, block=None, uptick=True, borrow=BORROW_RATE):
+              force=None, block=None, uptick=True, borrow=BORROW_RATE, flip=None, flip_gain=0.0):
+    """flip：布林 Series，True＝盤勢已轉多；轉多且放空獲利 >= flip_gain 時回補（原因「轉多有賺」）。"""
     """回傳 (交易明細, 每日權益)。權益以 1.0 起算；放空名目＝進場時權益。"""
     idx = np.flatnonzero((df.index >= start) & (df.index <= end))
     dates = df.index
@@ -119,6 +120,7 @@ def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, t
     cover = cover.reindex(dates).fillna(False).to_numpy(dtype=bool)
     force = force.reindex(dates).fillna(False).to_numpy(dtype=bool) if force is not None else np.zeros(len(df), bool)
     block = block.reindex(dates).fillna(False).to_numpy(dtype=bool) if block is not None else np.zeros(len(df), bool)
+    flip = flip.reindex(dates).fillna(False).to_numpy(dtype=bool) if flip is not None else np.zeros(len(df), bool)
     chg = df["close"].pct_change().to_numpy()
 
     trades, equity = [], []
@@ -149,6 +151,8 @@ def run_short(df, short, cover, start, end, stop=None, tp=None, max_days=None, t
             reason = None
             if use_signal and cover[i]:
                 reason = "訊號"
+            if flip[i] and -ret >= flip_gain:
+                reason = "轉多有賺"
             if max_days is not None and i - pos["i0"] + 1 >= max_days:
                 reason = "到期"
             if trail is not None and c[i] / pos["low"] - 1 >= trail:

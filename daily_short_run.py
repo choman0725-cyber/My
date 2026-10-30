@@ -1,4 +1,5 @@
-"""放空規則每日執行程式：殖利率 <1.5% ＋ 大盤空頭排列 ＋ 技術放空點，獲利 5% 回補，距最後回補日不足 30 天不空，最多 5 檔（規則見 SHORT_RULES.md）。
+"""放空規則每日執行程式：殖利率 <1.5% ＋ 大盤空頭排列 ＋ 技術放空點；獲利 5% 回補，大盤轉多且獲利 ≥2% 也回補；
+距最後回補日不足 30 天不空；最多 5 檔（規則見 SHORT_RULES.md）。
 
 做法：用規則從 2017-01 把歷史重跑到最新資料日，得到目前應有的空單，再依最新收盤判斷明天開盤要做的事。
 用法：
@@ -15,14 +16,15 @@ import pandas as pd
 import short_yield_study as sy
 from short_study import MARGIN_CALL, UPTICK_DROP
 
-YIELD_TH, REGIME, TARGET, MIN_GAP = 1.5, "R4 空頭排列MA5<20<60", 0.05, 30
+YIELD_TH, REGIME, TARGET, MIN_GAP, FLIP_GAIN = 1.5, "R4 空頭排列MA5<20<60", 0.05, 30, 0.02
 RULE_TEXT = """放空規則（最多 5 檔、每檔名目＝總資產 ÷ 5、放空與回補都隔天開盤）
   範圍：當天屬於 0050 或 0056 成分股（全部股票）
   放空：預估殖利率 < 1.5%（算不出的不空）且 加權指數空頭排列（MA5<MA20<MA60）
         且技術放空點任一：超買共振＋KD死叉＋年線下／爆量長上影線或爆量長黑／觸布林上軌＋K>70死叉／高檔區＋出貨訊號
         同日多檔依殖利率低到高挑；距下一個除權息最後回補日不足 30 天的不放空
-  回補：收盤較放空價跌 >= 5% 隔天開盤回補；除權息前 5 個交易日強制回補；維持率 130% 斷頭
-  不停損、不加碼、不設持有期限、大盤轉多不回補"""
+  回補：收盤較放空價跌 >= 5% 隔天開盤回補；大盤空頭排列消失（MA5>MA20 或 MA20>MA60）且獲利 >= 2% 也回補
+        除權息前 5 個交易日強制回補；維持率 130% 斷頭
+  不停損、不加碼、不設持有期限；大盤轉多但獲利不到 2% 繼續抱"""
 
 
 def main():
@@ -45,7 +47,8 @@ def main():
     regime = regimes[REGIME].reindex(dates).ffill().fillna(False).astype(bool)
     ma5, ma20, ma60 = (sy.sma(tai, n).reindex(dates).iloc[-1] for n in (5, 20, 60))
 
-    T, eq = sy.run_portfolio(data, dates, regimes, YIELD_TH, REGIME, False, capital=a.capital, target=TARGET, min_days_to_force=MIN_GAP)
+    T, eq = sy.run_portfolio(data, dates, regimes, YIELD_TH, REGIME, False, capital=a.capital, target=TARGET, min_days_to_force=MIN_GAP,
+                             flip_gain=FLIP_GAIN)
     value = eq.iloc[-1] * a.capital
     closed = T[T["原因"] != "期末"]
     opened = T[T["原因"] == "期末"]
@@ -70,6 +73,11 @@ def main():
         if gain >= TARGET:
             status.append("達 5%，明天回補")
             acts.append(f"回補 {r['代號']} {r['名稱']}：全部（獲利 {100 * gain:.1f}%）")
+        elif not regime.iloc[-1] and gain >= FLIP_GAIN:
+            status.append("大盤轉多且已賺 2%，明天回補")
+            acts.append(f"回補 {r['代號']} {r['名稱']}：全部（大盤空頭排列消失，獲利 {100 * gain:.1f}%）")
+        elif not regime.iloc[-1]:
+            status.append(f"大盤轉多但獲利 {100 * gain:.1f}% 不到 2%，續抱")
         if close / r["放空價"] - 1 >= MARGIN_CALL:
             status.append("斷頭")
         if d["force"].iloc[p]:

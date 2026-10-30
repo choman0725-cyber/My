@@ -22,6 +22,7 @@
       python short_yield_study.py hold       # 只跑持有上限掃描（10～45 個交易日）
       python short_yield_study.py add        # 只跑逆勢加碼一次（漲 5% 加碼）
       python short_yield_study.py gap        # 只跑「距最後回補日不足 N 天不放空」
+      python short_yield_study.py flip       # 只跑「大盤轉多且有賺就回補」
 輸出：results/short_yield_*.csv、results/short_yield_study.log
 """
 import time
@@ -256,7 +257,8 @@ def per_trade(data, regimes, log):
 # ---------- B. 5 檔組合 ----------
 
 def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET, max_days=None,
-                  first=1.0, add_at=None, add_frac=0.0, min_days_to_force=None):
+                  first=1.0, add_at=None, add_frac=0.0, min_days_to_force=None, flip_gain=None):
+    """flip_gain 不為 None 時：盤勢轉多且放空獲利 >= flip_gain 就回補（原因「轉多有賺」）；flip=True 則是轉多一律回補。"""
     """名目＝進場時總資產 ÷ slots；最多 slots 檔；同日多檔依殖利率低到高。回傳 (交易, 每日權益)。"""
     span = dates[dates >= UNIVERSE_START]
     arr = {}
@@ -264,11 +266,12 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
         df = d["df"].reindex(span)
         sig = entry_signal(d, y_th, rname, regimes, min_days_to_force).reindex(span).fillna(False).to_numpy(dtype=bool)
         cov = cover_signal(d, rname, regimes, flip).reindex(span).fillna(False).to_numpy(dtype=bool)
+        bull = cover_signal(d, rname, regimes, True).reindex(span).fillna(False).to_numpy(dtype=bool)
         last = d["df"].index[-1]
         arr[sid] = {"open": df["open"].to_numpy(), "close": df["close"].to_numpy(), "close_ff": df["close"].ffill().to_numpy(),
                     "sig": sig, "cover": cov, "force": d["force"].reindex(span).fillna(False).to_numpy(dtype=bool),
                     "block": d["block"].reindex(span).fillna(False).to_numpy(dtype=bool),
-                    "yield": d["yield"].reindex(span).to_numpy(), "chg": df["close"].pct_change().to_numpy(),
+                    "bull": bull, "yield": d["yield"].reindex(span).to_numpy(), "chg": df["close"].pct_change().to_numpy(),
                     "delist_n": span.get_indexer([last])[0] if last < span[-1] - pd.Timedelta(days=10) else len(span) + 5,
                     "start_n": span.searchsorted(d["start"])}
     eq, pos, trades, equity = 1.0, {}, [], []
@@ -321,6 +324,8 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
             reason = None
             if a["cover"][n]:
                 reason = "轉多回補"
+            if flip_gain is not None and a["bull"][n] and -ret >= flip_gain:
+                reason = "轉多有賺"
             if max_days is not None and n - p["n0"] + 1 >= max_days:
                 reason = f"滿{max_days}日"
             if ret <= -target:
@@ -618,6 +623,69 @@ def gap_scan(data, dates, regimes, log, combos=(("殖利率<1.5%", "空頭排列
     return S, PP
 
 
+# ---------- G. 大盤轉多且有賺就回補 ----------
+
+FLIP_GAINS = (None, 0.005, 0.01, 0.015, 0.02, 0.025, 0.03)
+
+
+def flip_scan(data, dates, regimes, log, combos=(("殖利率<1.5%", "空頭排列"), ("殖利率<2%", "空頭排列")), min_gap=30):
+    """停利 5%、不停損、不加碼、距最後回補日 ≥30 天；加「大盤空頭排列消失且放空獲利 ≥ X% 就回補」。"""
+    years = (max(d["df"].index[-1] for d in data.values()) - UNIVERSE_START).days / 365.25
+    rows, prow, all_t = {}, {}, []
+    for yname, rname_s in combos:
+        y_th, rname = YIELDS[yname], REGIMES[rname_s]
+        for fg in FLIP_GAINS:
+            fname = "不看轉多" if fg is None else f"轉多且賺≥{100 * fg:g}%"
+            tr = []
+            for sid, d in data.items():
+                sig = entry_signal(d, y_th, rname, regimes, min_gap)
+                if not sig.any():
+                    continue
+                bull = cover_signal(d, rname, regimes, True)
+                t, _ = run_short(d["df"], sig, cover_signal(d, rname, regimes, False), d["start"], d["df"].index[-1],
+                                 tp=TARGET, force=d["force"], block=d["block"],
+                                 flip=bull if fg is not None else None, flip_gain=fg if fg is not None else 0.0)
+                if len(t):
+                    tr.append(t.assign(stock_id=sid))
+            T = pd.concat(tr, ignore_index=True)
+            r = T["return"]
+            wins, losses = r[r > 0], r[r <= 0]
+            T["年"] = T["entry_date"].dt.year
+            key = (yname, fname)
+            rows[key] = {
+                "筆數": len(r), "勝率%": 100 * (r > 0).mean(), "每筆期望值%": 100 * r.mean(),
+                "平均獲利%": 100 * wins.mean(), "平均虧損%": 100 * losses.mean() if len(losses) else 0,
+                "獲利因子": wins.sum() / -losses.sum() if len(losses) and losses.sum() < 0 else np.inf,
+                "平均天數": T["days"].mean(),
+                "停利／轉多有賺／強制回補／斷頭": "／".join(str(int((T["reason"] == k).sum())) for k in ("停利", "轉多有賺", "強制回補", "斷頭")),
+                "轉多有賺那些每筆%": 100 * T[T["reason"] == "轉多有賺"]["return"].mean() if (T["reason"] == "轉多有賺").any() else np.nan,
+                "最差一筆%": 100 * r.min(), "每檔每年貢獻%": 100 * r.sum() / T["stock_id"].nunique() / years,
+                "前段每筆%": 100 * T[T["年"] <= 2023]["return"].mean(), "後段每筆%": 100 * T[T["年"] >= 2024]["return"].mean(),
+            }
+            all_t.append(T.assign(殖利率=yname, 轉多回補=fname))
+            P, eq = run_portfolio(data, dates, regimes, y_th, rname, False, target=TARGET, min_days_to_force=min_gap, flip_gain=fg)
+            yrs = (eq.index[-1] - eq.index[0]).days / 365.25
+            prow[key] = {
+                "筆數": len(P), "勝率%": 100 * (P["報酬率"] > 0).mean(), "每筆%": 100 * P["報酬率"].mean(),
+                "期末萬": eq.iloc[-1] * CAPITAL / 1e4, "IRR%": 100 * (eq.iloc[-1] ** (1 / yrs) - 1),
+                "最大回撤%": 100 * (eq / eq.cummax() - 1).min(), "強制回補": int(P["原因"].str.startswith("強制回補").sum()),
+                "斷頭": int(P["原因"].str.startswith("斷頭").sum()), "最差一筆萬": P["損益元"].min() / 1e4, "總損益萬": P["損益元"].sum() / 1e4,
+            }
+            all_t[-1] = all_t[-1].assign(組合筆數=len(P))
+    S = pd.DataFrame(rows).T
+    S.index.names = ["殖利率", "轉多回補"]
+    num = [c for c in S.columns if c != "停利／轉多有賺／強制回補／斷頭"]
+    S[num] = S[num].astype(float).round(2)
+    S.to_csv(RESULTS / "short_yield_flip.csv", encoding="utf-8-sig")
+    pd.concat(all_t).to_csv(RESULTS / "short_yield_flip_trades.csv", index=False, encoding="utf-8-sig")
+    PP = pd.DataFrame(prow).T.astype(float).round(1)
+    PP.index.names = ["殖利率", "轉多回補"]
+    PP.to_csv(RESULTS / "short_yield_flip_portfolio.csv", encoding="utf-8-sig")
+    log("\n【G. 大盤空頭排列消失且放空獲利 ≥X% 就回補（停利 5%、距最後回補日 ≥30 天）｜每檔獨立】\n" + fmt(S))
+    log("\n【G.｜5 檔組合（500 萬）】\n" + fmt(PP))
+    return S, PP
+
+
 def main(argv=()):
     t0 = time.time()
     lines = []
@@ -637,6 +705,10 @@ def main(argv=()):
         ok = sum(((d["yield"] < y_th) & d["member"]).reindex(span).fillna(False).astype(int) for d in data.values())
         cnt[yname] = {"平均每天符合檔數": ok.mean(), "最少": ok.min(), "最多": ok.max()}
     log("\n各殖利率門檻下，成分股中符合的檔數（每天）：\n" + fmt(pd.DataFrame(cnt).T.round(1)))
+    if "flip" in argv:
+        flip_scan(data, dates, regimes, log)
+        (RESULTS / "short_yield_flip.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if "gap" in argv:
         gap_scan(data, dates, regimes, log)
         (RESULTS / "short_yield_gap.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -659,6 +731,7 @@ def main(argv=()):
     hold_scan(data, dates, regimes, log)
     add_scan(data, dates, regimes, log)
     gap_scan(data, dates, regimes, log)
+    flip_scan(data, dates, regimes, log)
     log(f"\n總耗時 {time.time() - t0:.0f} 秒")
     (RESULTS / "short_yield_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

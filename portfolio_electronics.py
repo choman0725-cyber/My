@@ -29,19 +29,20 @@ ELECTRONICS = {
 }
 BASES = {
     "原版": {},
-    "原版＋套牢不佔名額": {"stale_free_slot": True},
     "解讀二·冷卻7日": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
-    "解讀二·冷卻7日＋以盈補虧(僅變壞)": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                                     "util_mode": "invested", "first": 0.8, "offset_loss": True, "offset_only_bad": True},
 }
-REMOVALS = {
-    "": {},
-    "｜移出R1立刻賣": {"removal_exit": "immediate"},
-    "｜移出R2回本賣": {"removal_exit": "breakeven"},
-    "｜移出R3賺10%賣": {"removal_exit": "half_target"},
-    "｜移出R4技術賣訊或回本": {"removal_exit": "tech"},
+HANDLING = {
+    "不佔名額": {"stale_free_slot": True},
+    "以盈補虧": {"offset_loss": True, "offset_only_stale": True},
+    "不佔名額＋以盈補虧": {"stale_free_slot": True, "offset_loss": True, "offset_only_stale": True},
 }
-VARIANTS = {b + r: {**bk, **rk} for b, bk in BASES.items() for r, rk in REMOVALS.items()}
+STALE = {"舊定義(套1年或虧30%)": {}, "套牢(虧30%)滿1年": {"trap_days": 365}, "套牢(虧30%)滿2年": {"trap_days": 730}}
+VARIANTS = {}
+for b, bk in BASES.items():
+    VARIANTS[b] = bk
+    for st, stk in STALE.items():
+        for h, hk in HANDLING.items():
+            VARIANTS[f"{b}｜{st}·{h}"] = {**bk, **stk, **hk}
 
 
 def main():
@@ -84,7 +85,7 @@ def main():
     with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for key, tr in details.items():
-            if "以盈補虧" in key or "移出" in key:
+            if "｜" in key.split("｜", 1)[1]:
                 continue
             hold = tr[tr["出場"].isna()].copy()
             hold["約股數"] = [int(m / raw_last[s]) for m, s in zip(hold["市值"], hold["代號"])]

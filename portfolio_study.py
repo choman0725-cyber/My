@@ -174,7 +174,7 @@ def prepare(stock_ids, dates):
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
-        removal_exit=None):
+        removal_exit=None, trap_days=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -189,6 +189,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
+    trap_days：改用「套牢」定義判斷 stale（供 offset_only_stale 與 stale_free_slot 使用）——
+      收盤低於平均成本 30% 以上視為套牢，連續套牢超過 trap_days 天才算；回到 -30% 以內就重新計算。
+      未設定時沿用舊定義：持有超過 1 年或虧損超過 30%。
     removal_exit：被移出成分股後的伺機出場方式（不等 +20%）：
       immediate＝隔天開盤就賣；breakeven＝扣成本後不虧就賣；half_target＝獲利 10% 就賣；
       tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣。
@@ -199,6 +202,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     last_buy_n = -10 ** 9
 
     raw_cache = {}
+
+    def is_stale(sid, pos, k, price):
+        if trap_days is None:
+            return (dates[k] - dates[pos["start"]]).days > 365 or price / (pos["cost"] / pos["shares"]) - 1 < -0.30
+        return pos.get("trap_start") is not None and (dates[k] - pos["trap_start"]).days > trap_days
 
     def raw_open(sid, n):
         if sid not in raw_cache:
@@ -214,7 +222,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if sid in exclude or pos["adds"] < 1 or np.isnan(o):
                 continue
             avg = pos["cost"] / pos["shares"]
-            if offset_only_stale and not ((dates[n] - dates[pos["start"]]).days > 365 or o / avg - 1 < -0.30):
+            if offset_only_stale and not is_stale(sid, pos, n - 1, data[sid]["close_ff"][n - 1]):
                 continue
             if offset_only_bad and not data[sid]["bad"][n - 1]:
                 continue
@@ -314,9 +322,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)
         if stale_free_slot:
-            counted = sum(1 for s_, q in positions.items()
-                          if not ((dates[p] - dates[q["start"]]).days > 365
-                                  or data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 < -0.30))
+            counted = sum(1 for s_, q in positions.items() if not is_stale(s_, q, p, data[s_]["close_ff"][p]))
         else:
             counted = len(positions)
         free = MAX_SLOTS - counted
@@ -350,6 +356,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if not np.isnan(d["low"][n]):
                 pos["low"] = min(pos["low"], d["low"][n])
             value += pos["shares"] * d["close_ff"][n]
+            trapped = d["close_ff"][n] < 0.7 * pos["cost"] / pos["shares"]
+            if trapped and pos.get("trap_start") is None:
+                pos["trap_start"] = dates[n]
+            elif not trapped:
+                pos["trap_start"] = None
         equity.append(value)
         exposure.append(1 - cash / value if value > 0 else 0.0)
     for sid, pos in positions.items():

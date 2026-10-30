@@ -32,10 +32,14 @@ RECOMMENDED = {
     "②原版＋套牢不佔名額": {"stale_free_slot": True},
 }
 SPLITS = {"0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
+_R5 = {"removal_exit": "tech_profit", "free_slot_removed": True}
 EXITS = {
-    "·R5＋移出不佔名額": {"removal_exit": "tech_profit", "free_slot_removed": True},
-    "·R5＋移出不佔名額·套牢每年多加碼": {"removal_exit": "tech_profit", "free_slot_removed": True, "time_add_days": 365},
-    "·R5＋移出不佔名額·套牢每半年多加碼": {"removal_exit": "tech_profit", "free_slot_removed": True, "time_add_days": 182},
+    "·R5＋移出不佔名額": _R5,
+    "·H0滿2年強制賣": {**_R5, "max_hold_days": 730},
+    "·H1逐步降停利＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.10), (548, 0.0)], "max_hold_days": 730},
+    "·H2滿1年回本賣＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "max_hold_days": 730},
+    "·H3逐步降停利＋技術賣訊＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.10), (548, 0.0)],
+                                     "late_tech_days": 548, "max_hold_days": 730},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}
@@ -73,7 +77,10 @@ def main():
                      "資金使用率%": eq.attrs["資金使用率%"],
                      "持有>1年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 365).sum()),
                      "持有>2年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 730).sum()),
-                     "最長持有(年)": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days.max()) / 365}
+                     "最長持有(年)": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days.max()) / 365,
+                     "強制出場": int((tr["原因"] == "持有滿期強制出場").sum()),
+                     "強制出場虧損(萬)": ((tr["回收"] - tr["投入"])[tr["原因"] == "持有滿期強制出場"]).sum() / 1e4,
+                     "平均持有天": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days).mean()}
         details[key] = tr
         tr.to_csv(RESULTS / f"portfolio_electronics_{vname}.csv", index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):

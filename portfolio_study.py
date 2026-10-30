@@ -176,7 +176,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
         free_slot_removed=False, free_slot_deep=False, contributions=None,
-        time_add_days=None, time_add_amount=0.20):
+        time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
+        late_tech_days=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -193,6 +194,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     free_slot_deep：目前虧損超過 30% 的部位不佔名額。
     time_add_days：持有每滿這麼多天且仍虧損，就多一次加碼機會（出現爆量下影線／長紅、收盤低於平均成本時，
       加碼單檔額度 × time_add_amount）；例如 365＝每年一次、182＝每半年一次。
+    target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
+      滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
+    max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    late_tech_days：持有滿這麼多天後，有獲利且出現價量／引線賣訊也賣。
     contributions：{日期索引 n: 追加金額（以初始資金為 1 的比例）}，當天開盤前加入現金。
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
@@ -302,8 +307,23 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             o, c_prev = d["open"][n], d["close"][p]
             if np.isnan(o) or np.isnan(c_prev):
                 continue
-            if c_prev / (pos["cost"] / pos["shares"]) - 1 >= TARGET:
-                close_out(sid, n, o, "停利")
+            held = (dates[p] - dates[pos["start"]]).days
+            target = TARGET
+            if target_schedule:
+                target = [tg for d0, tg in target_schedule if held >= d0][-1]
+            gain = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1 if target == 0 else \
+                c_prev / (pos["cost"] / pos["shares"]) - 1
+            if gain >= target:
+                close_out(sid, n, o, "停利" if target == TARGET else f"降低停利({target:.0%})")
+                sold_today.add(sid)
+                continue
+            if late_tech_days and held >= late_tech_days and d["tech_sell"][p] \
+                    and c_prev * (1 - SELL_COST) >= pos["cost"] / pos["shares"]:
+                close_out(sid, n, o, "持有久＋技術賣訊")
+                sold_today.add(sid)
+                continue
+            if max_hold_days and held >= max_hold_days:
+                close_out(sid, n, o, "持有滿期強制出場")
                 sold_today.add(sid)
                 continue
             if removal_exit and not mem.get(sid, no)[p]:

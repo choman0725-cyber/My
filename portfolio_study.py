@@ -563,6 +563,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     cols = ["代號", "進場", "出場", "原因", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日", "投入", "回收", "市值"]
     eq = pd.Series(equity, index=dates[max(start_n, 1):end_n + 1])
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
+    eq.attrs["positions"] = {sid: dict(pos) for sid, pos in positions.items()}  # 期末部位狀態（供每日執行程式用）
+    eq.attrs["cash"] = cash
     return pd.DataFrame(trades, columns=cols), eq
 
 

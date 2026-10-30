@@ -59,8 +59,22 @@ def short_entries(df):
     return e
 
 
-def prepare():
-    """每檔：還原價、原始收盤、預估殖利率、技術放空訊號、成分股期間、除息停券。"""
+PREPARED = RESULTS / "short_prepared.pkl"
+
+
+def prepare(cache=True):
+    """每檔：還原價、原始收盤、預估殖利率、技術放空訊號、成分股期間、除息停券。
+    cache=True 時存／讀 results/short_prepared.pkl（資料更新後請刪掉它重算）。"""
+    if cache and PREPARED.exists():
+        return pd.read_pickle(PREPARED)
+    out = _prepare()
+    if cache:
+        RESULTS.mkdir(exist_ok=True)
+        pd.to_pickle(out, PREPARED)
+    return out
+
+
+def _prepare():
     cons = pd.read_csv(UNI / "constituents.csv", dtype=str)
     taiex = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"]).set_index("date")
     dates = taiex.index[taiex.index >= pd.Timestamp("2015-01-01")]
@@ -85,7 +99,7 @@ def prepare():
         ex_dates = res_all.loc[(res_all["stock_id"] == sid) & res_all["stock_or_cache_dividend"].astype(str).str.contains("息|權"), "date"]
         force, block = ex_dividend_blocks(df.index, ex_dates.tolist())
         data[sid] = {
-            "df": df, "name": names.get(sid, ""),
+            "df": df, "name": names.get(sid, ""), "raw_close": raw_close,
             "yield": 100 * dps / raw_close,
             "sig": short_entries(df)["任一"].fillna(False),
             "member": member[sid].reindex(df.index).ffill().fillna(False).astype(bool),

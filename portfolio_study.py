@@ -294,7 +294,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
-        free_slot_removed=False, free_slot_deep=False, contributions=None,
+        free_slot_removed=False, free_slot_deep=False, contributions=None, miss_exit=None, miss_key="miss",
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
@@ -369,7 +369,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       immediate＝隔天開盤就賣；breakeven＝扣成本後不虧就賣；half_target＝獲利 10% 就賣；
       tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣；
       tech_profit＝有獲利（扣成本後不虧）且出現價量／引線賣訊才賣，虧損時續抱（仍可等 +20% 停利）。
-    使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。"""
+    使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。
+    miss_exit：持股的股利公告「不如預期」（data[sid][miss_key][p] 為 True 的日子，由呼叫端依推估值與公告值算好）後的出場方式，
+      選項同 removal_exit（immediate／breakeven／tech／tech_profit）；一旦標記就持續到出場，加碼照舊；標記期間不新買進。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
@@ -630,6 +632,17 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     close_out(sid, n, o, "移出名單出場")
                     sold_today.add(sid)
                     continue
+            if miss_exit:
+                pos["miss"] = pos.get("miss", False) or bool(d[miss_key][p])
+                if pos["miss"]:
+                    avg = pos["cost"] / pos["shares"]
+                    even = c_prev * (1 - SELL_COST) >= avg
+                    if (miss_exit == "immediate" or (miss_exit == "breakeven" and even)
+                            or (miss_exit == "tech" and (even or d["tech_sell"][p]))
+                            or (miss_exit == "tech_profit" and even and d["tech_sell"][p])):
+                        close_out(sid, n, o, "股利不如預期出場")
+                        sold_today.add(sid)
+                        continue
             if exit_bad and d["bad"][p] and c_prev < pos["cost"] / pos["shares"]:
                 close_out(sid, n, o, "基本面變壞出場")
                 sold_today.add(sid)
@@ -694,7 +707,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         if free > 0:
             cands = [(data[s_]["yield"][p], s_) for s_ in data
                      if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p]
-                     and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
+                     and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])
+                     and not (miss_exit and data[s_][miss_key][p])]   # 股利公告不如預期期間不新買
             picked = 0
             for _, sid in sorted(cands, reverse=True):
                 if picked >= free:

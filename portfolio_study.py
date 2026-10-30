@@ -533,6 +533,9 @@ def attach_fundamentals(data, dates):
             ttm = pd.Series(e["eps"].rolling(4).sum().values, index=e["published"]).groupby(level=0).last()
             loss = (ttm < 0).reindex(dates.union(ttm.index)).ffill().reindex(dates).fillna(False).astype(bool).values
         d["eps_loss"] = loss
+        px = d["df"].dropna(subset=["open", "close"])
+        t = pv_triggers(px)
+        d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values
         c = px["close"]
         ma10, ma20 = sma(c, 10), sma(c, 20)
         _, _, upper = bollinger(px)
@@ -545,9 +548,6 @@ def attach_fundamentals(data, dates):
         d["reversal_Ra"] = rx(ts | (c < ma10))
         d["reversal_Rb"] = rx(c < ma20)
         d["reversal_Rc"] = rx(ts | cross_down(k, dd))
-        px = d["df"].dropna(subset=["open", "close"])
-        t = pv_triggers(px)
-        d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values
     return data
 
 

@@ -12,7 +12,7 @@
 利潤率模式（預估 EPS 再乘上毛利率／營業利益率／淨利率的調整係數，見 portfolio_study.py 檔頭）：
   python fetch_financials.py 抓 financials_all.csv 後，
   YIELD_MODE=margin python portfolio_electronics.py 重建 portfolio_prepared_margin.pkl，再
-  YIELD_MODE=margin python daily_run.py。未回測前只供參考，正式版仍是 YIELD_MODE=eps。
+  YIELD_MODE=margin python daily_run.py。全池回測輸給現行算法（FINAL_RULES.md 第五節），正式版維持 YIELD_MODE=eps。
 """
 import argparse
 import copy

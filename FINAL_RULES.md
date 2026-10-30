@@ -65,16 +65,31 @@
 - 要更穩：兩個帳戶各半資金，一個跑 V1、一個跑 V2，各看全部股票池、各 5 檔（三段 30.9／最差 19.8／標準差 1.4）。
 - 要更簡單：V1（獲利 ≥10% 且殖利率 <5%）。
 
-## 五、利潤率模式（實驗中，未納入正式版）
+## 五、預估股利算法的比較（2026-10-30，結論：維持現行算法）
 
-`YIELD_MODE=margin` 時預估 EPS 改為「近四季 EPS × 利潤率調整係數」，係數＝近 2 季的毛利率、營業利益率、淨利率各除以近四季的同一利潤率後取平均，夾在 0.5～1.5（`portfolio_study.margin_factor`）。意義是用最近半年的獲利能力重算近四季營收能賺多少，利潤率擴張時估高、收縮時估低。需要 `data/universe/financials_all.csv`（`python fetch_financials.py` 從 FinMind 抓），快取改存 `results/portfolio_prepared_margin.pkl`。
+測了六種「預估 EPS × 配息率」的變化（`yield_variant_study.py`，正式版規則不變只換殖利率）。利潤率模式需要 `data/universe/financials_all.csv`（`python fetch_financials.py` 從 FinMind 抓，147 檔有資料），`YIELD_MODE=margin` 可切換，快取存 `results/portfolio_prepared_margin.pkl`。
 
-2382 單檔驗證（`python margin_yield_study.py`，公告前一天推估 vs 實際股利，2016～2025 十年）：平均絕對誤差 EPS 法 10.6%、EPS＋利潤率法 10.1%；2021／2023／2025 三年明顯改善（13→2、−13→4、7→−1），2016／2017／2022 變差。全池回測尚未做，正式版維持 `YIELD_MODE=eps`。
+| 版本 | 預估 EPS | 配息率 | 全池推估平均絕對誤差 | 三段平均 IRR | 最差 10% | 500 萬期末（萬） |
+|---|---|---|---|---|---|---|
+| **A 現行** | 近四季 EPS | 近 3 年平均 | 31.5% | **31.6** | **18.5** | **4,301** |
+| B | 近四季 × 利潤率係數 | 近 3 年平均 | 36.3% | 30.1 | 14.7 | 3,356 |
+| C | 年度完整時用整年 EPS | 近 3 年平均 | 24.8% | 29.3 | 18.2 | 3,015 |
+| D | 同 C | 去年 | 25.3% | 25.2 | 15.7 | 2,852 |
+| E | 同 C | 近 3 年加權 5/3/2 | 24.2% | 29.7 | 15.2 | 3,303 |
+| G | 同 C，未完整時近四季 × 係數 | 近 3 年平均 | 25.0% | 29.1 | 15.1 | 3,823 |
+
+推估誤差＝全池年配股 2016 年起每年股利公告前一天的推估 vs 實際（1,183 筆）。利潤率係數＝近 2 季毛利率、營業利益率、淨利率各除以近四季同一利潤率的平均，夾在 0.5～1.5（`portfolio_study.margin_factor`）。
+
+結論：
+- 「年度完整就用整年 EPS」（C／D／E）把推估誤差從 31.5% 降到 25% 左右，但回測每項都輸現行版。原因是整年 EPS 從 3/31 到 7 月公告前都凍結，近四季 EPS 在 5/15 就把 Q1 納入；策略要的是「公司現在賺多少」的即時訊號，不是對下一筆股利金額的精準預測，近四季 EPS 反映景氣轉折快兩個月，這對買點與續抱判斷更有用。
+- 利潤率係數（B／G）在利潤率轉折年對個股推估有幫助，但全池推估誤差變大，前 7 年績效明顯下滑（B 的 IRR 中位數 16.6 vs 21.6），只有後 3 年延續略好。不採用。
+- 配息率改用去年或加權都比 3 年平均差，單一年度的波動會直接進門檻判斷。
+- 正式版維持 A：近四季 EPS × 近 3 年平均配息率，`YIELD_MODE=eps`。利潤率係數保留為選項，不進正式規則。
 
 ## 六、相關檔案
 
 - 引擎：`portfolio_study.py`（`run()`）、`param_opt.py`（參數→引擎設定、`BASE_A`、`market_stats()` 市場中位數）
 - 正式版設定：`daily_run.py` 的 `FINAL`
 - 每日執行：`daily_run.py`
-- 利潤率模式：`fetch_financials.py`（抓季度損益表）、`margin_yield_study.py`（單檔比較）、`portfolio_study.py` 的 `margin_table()`／`margin_factor()`
+- 預估股利算法比較：`yield_variant_study.py`（全池六版本）、`margin_yield_study.py`（2382 單檔）、`fetch_financials.py`（抓季度損益表）；結果 `results/yield_variant_*.csv`
 - 研究結果：`results/param_opt_*.csv`、`target_scan.csv`、`mix_v12_*.csv`、`tranche_*.csv`、`slots_*.csv`、`etf_split_*.csv`、`money_12_475.csv`

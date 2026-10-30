@@ -178,7 +178,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
-        start_n=1, end_n=None, lot_mode=None):
+        start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -198,6 +198,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
+      hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
+      hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
     lot_mode：整張限制（1 張 = 1000 股，依 capital 與原始股價換算）。None＝不限制（可零股）；
       "skip"＝不足一張就放棄，夠的話無條件捨去到整張；
       "borrow"＝不足一張時借用下一次追加資金（現金可為負，下限 = 下一次追加金額），沒有未來追加則放棄。
@@ -349,7 +352,18 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if gain < TARGET and not has_cand:
                 gain = -1  # 降低停利需要有好標的可換
             if gain >= target:
-                close_out(sid, n, o, "停利" if target == TARGET else f"降低停利({target:.0%})")
+                y = d["yield"][p]
+                keep = (hold_yield is not None and not np.isnan(y) and y >= hold_yield
+                        and not (hold_yield_cap is not None and gain >= hold_yield_cap))
+                if keep:
+                    pos["tp_hit"] = True
+                else:
+                    close_out(sid, n, o, ("停利" if target == TARGET else f"降低停利({target:.0%})")
+                              + ("·殖利率<門檻" if pos.get("tp_hit") else ""))
+                    sold_today.add(sid)
+                    continue
+            elif pos.get("tp_hit") and hold_yield_floor is not None and gain < target - hold_yield_floor:
+                close_out(sid, n, o, "保利回落賣出")
                 sold_today.add(sid)
                 continue
             if late_tech_days and held >= late_tech_days and d["tech_sell"][p] \

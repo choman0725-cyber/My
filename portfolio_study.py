@@ -158,12 +158,40 @@ def margin_factor(dates, m, recent_q=None, clip=None):
     return out
 
 
-def forward_dividend(dates, eps, div, payout_years=3, factor=None, eps_base="ttm", payout="mean"):
+def growth_factor(dates, eps, m=None, kind="eps", damp=1.0, clip=(-0.5, 1.0)):
+    """每日「下一年成長係數」＝1 ＋ damp × 年增率，年增率夾在 clip 之間；算不出來視同 1。
+    kind="eps"：近四季 EPS 對前一個近四季的年增率（前一個近四季 <= 0 時視同 0）；
+    kind="rev"：近 2 季營收對去年同期的年增率（需 margin_table 的 m）。都用法定公布期限，無前視。"""
+    out = pd.Series(np.nan, index=dates)
+    if kind == "eps":
+        if len(eps) < 8:
+            return out
+        v, pub = eps["eps"].values, eps["published"].values
+        g = np.full(len(v) + 1, np.nan)
+        for k in range(8, len(v) + 1):
+            cur, prev = v[k - 4:k].sum(), v[k - 8:k - 4].sum()
+            g[k] = cur / prev - 1 if prev > 0 else 0.0
+    else:
+        if m is None or len(m) < 6:
+            return out
+        v, pub = m["revenue"].values, m["published"].values
+        g = np.full(len(v) + 1, np.nan)
+        for k in range(6, len(v) + 1):
+            cur, prev = v[k - 2:k].sum(), v[k - 6:k - 4].sum()
+            g[k] = cur / prev - 1 if prev > 0 else 0.0
+    g = 1 + damp * np.clip(g, *clip)
+    out[:] = g[np.searchsorted(pub, dates.values, side="right")]
+    return out
+
+
+def forward_dividend(dates, eps, div, payout_years=3, factor=None, eps_base="ttm", payout="mean", use_announced=True):
     """預估年度現金股利 = 預估 EPS × 配息率。
-    factor：每日利潤率調整係數（margin_factor），None 或 NaN 視同 1；只乘在「近四季 EPS」上。
+    factor：每日調整係數（margin_factor 的利潤率係數、growth_factor 的成長係數，或兩者相乘），None 或 NaN 視同 1；
+            只乘在「近四季 EPS」上。
     eps_base："ttm"＝近四季 EPS；"fy"＝年配股的待發股利所屬年度（最後一個已除息年度＋1）四季都已公布、
               股利尚未公告時，直接用該整年 EPS（不乘係數），其他時候同 "ttm"。
-    payout："mean"＝近 payout_years 個已知年度平均；"last"＝最近一個已知年度；"weighted"＝近 3 年加權 5/3/2（新到舊）。"""
+    payout："mean"＝近 payout_years 個已知年度平均；"last"＝最近一個已知年度；"weighted"＝近 3 年加權 5/3/2（新到舊）。
+    use_announced：年配股下一次股利已公告未除息時直接用公告值；False 則一律用推估（例如推估「下一年」時）。"""
     out = pd.Series(np.nan, index=dates)
     if eps.empty or div.empty:
         return out
@@ -178,7 +206,7 @@ def forward_dividend(dates, eps, div, payout_years=3, factor=None, eps_base="ttm
     eps_pub, eps_val, eps_fy = eps["published"].values, eps["eps"].values, eps["fy"].values
     ex_dates, ex_fy = div["ex_date"].values, div["fy"].values
     for i, t in enumerate(dates):
-        if annual_payer:
+        if annual_payer and use_announced:
             pending = div[(div["announced"] <= t) & (div["ex_date"] > t)]
             if len(pending):
                 out[t] = pending["cash"].iloc[-1]

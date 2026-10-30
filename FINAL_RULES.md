@@ -91,5 +91,5 @@
 - 引擎：`portfolio_study.py`（`run()`）、`param_opt.py`（參數→引擎設定、`BASE_A`、`market_stats()` 市場中位數）
 - 正式版設定：`daily_run.py` 的 `FINAL`
 - 每日執行：`daily_run.py`
-- 預估股利算法比較：`yield_variant_study.py`（全池六版本）、`margin_yield_study.py`（2382 單檔）、`fetch_financials.py`（抓季度損益表）；結果 `results/yield_variant_*.csv`
+- 預估股利算法比較：`yield_variant_study.py`（全池六版本）、`margin_yield_study.py`（2382 單檔）、`fetch_financials.py`（抓季度損益表）；結果 `results/yield_variant_base_*.csv`、`yield_variant_next_*.csv`
 - 研究結果：`results/param_opt_*.csv`、`target_scan.csv`、`mix_v12_*.csv`、`tranche_*.csv`、`slots_*.csv`、`etf_split_*.csv`、`money_12_475.csv`

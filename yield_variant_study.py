@@ -9,7 +9,7 @@
   G C 的 EPS，年度未完整時近四季 × 利潤率係數。× 近 3 年平均（需 financials_all.csv）
 績效：param_opt.evaluate（前 7 年 20 情境、後 3 年延續／單獨）＋ 500 萬 2017 起不追加。
 準確度：全池年配股每年股利公告前一天的推估 vs 實際，平均絕對誤差與中位數誤差（2017 年起）。
-需要 results/portfolio_prepared.pkl（python portfolio_electronics.py 會建）。用法：python yield_variant_study.py
+需要 results/portfolio_prepared.pkl（python portfolio_electronics.py 會建）。\n用法：python yield_variant_study.py [base|next]　base＝上面六種；next＝「一律用下一年推估」組（不用公告值、近四季 EPS × 成長係數）
 """
 import pickle
 
@@ -24,7 +24,7 @@ from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 
-VARIANTS = {
+BASE_VARIANTS = {
     "A 現行：近四季EPS×近3年均": dict(eps_base="ttm", payout="mean"),
     "B 近四季EPS×利潤率係數": dict(eps_base="ttm", payout="mean", margin=True),
     "C 整年EPS(年度完整時)": dict(eps_base="fy", payout="mean"),
@@ -32,6 +32,19 @@ VARIANTS = {
     "E 整年EPS×加權配息率5/3/2": dict(eps_base="fy", payout="weighted"),
     "G 整年EPS，未完整時×利潤率係數": dict(eps_base="fy", payout="mean", margin=True),
 }
+# 「一律用下一年推估」：不用公告值，預估 EPS = 近四季 EPS × 成長係數（EPS 年增或近 2 季營收年增，夾在 -50%～+100%）
+NEXT_VARIANTS = {
+    "A 現行：近四季EPS×近3年均": dict(eps_base="ttm", payout="mean"),
+    "A0 現行但不用公告值": dict(eps_base="ttm", payout="mean", announced=False),
+    "H1 下一年：×(1+EPS年增)": dict(eps_base="ttm", payout="mean", announced=False, growth="eps"),
+    "H2 下一年：×(1+0.5×EPS年增)": dict(eps_base="ttm", payout="mean", announced=False, growth="eps", damp=0.5),
+    "H3 下一年：×(1+近2季營收年增)": dict(eps_base="ttm", payout="mean", announced=False, growth="rev"),
+    "H4 下一年：×(1+0.5×營收年增)": dict(eps_base="ttm", payout="mean", announced=False, growth="rev", damp=0.5),
+    "H5 下一年：×(1+營收年增)×利潤率係數": dict(eps_base="ttm", payout="mean", announced=False, growth="rev", margin=True),
+    "H6 H1 但已公告仍用公告值": dict(eps_base="ttm", payout="mean", growth="eps"),
+}
+SETS = {"base": BASE_VARIANTS, "next": NEXT_VARIANTS}
+VARIANTS = BASE_VARIANTS
 
 
 def build_yields(data, dates):
@@ -49,12 +62,17 @@ def build_yields(data, dates):
     for sid in data:
         df, raw_close = ps.load_prices(sid)
         eps, div = ps.eps_table(eps_all, sid), ps.dividend_events(div_all, sid, res_all)
-        factor = ps.margin_factor(df.index, ps.margin_table(fin_all, sid)) if fin_all is not None else None
+        mt = ps.margin_table(fin_all, sid) if fin_all is not None else None
+        factor = ps.margin_factor(df.index, mt) if mt is not None else None
         annual = (div.groupby("fy").size() == 1).all() if len(div) else False
         by = div.groupby("fy").agg(cash=("cash", "sum"), ann=("announced", "min")) if len(div) else None
         for name, spec in variants.items():
-            dps = ps.forward_dividend(df.index, eps, div, factor=factor if spec.get("margin") else None,
-                                      eps_base=spec["eps_base"], payout=spec["payout"])
+            f = factor if spec.get("margin") else None
+            if spec.get("growth"):
+                g = ps.growth_factor(df.index, eps, mt, kind=spec["growth"], damp=spec.get("damp", 1.0))
+                f = g if f is None else f * g.fillna(1.0)
+            dps = ps.forward_dividend(df.index, eps, div, factor=f, eps_base=spec["eps_base"], payout=spec["payout"],
+                                      use_announced=spec.get("announced", True))
             yields[name][sid] = (100 * dps / raw_close).reindex(dates).values
             if annual:
                 for fy, r in by.iterrows():
@@ -62,12 +80,16 @@ def build_yields(data, dates):
                         continue
                     before = dps[dps.index < r["ann"]].dropna()
                     if len(before):
-                        acc_rows[name].append(dict(代號=sid, 年度=fy, 實際=r["cash"], 推估=before.iloc[-1], 誤差=100 * (before.iloc[-1] / r["cash"] - 1)))
+                        nxt = by["cash"].get(fy + 1, np.nan)
+                        acc_rows[name].append(dict(代號=sid, 年度=fy, 實際=r["cash"], 推估=before.iloc[-1], 誤差=100 * (before.iloc[-1] / r["cash"] - 1),
+                                                   次年誤差=100 * (before.iloc[-1] / nxt - 1) if nxt > 0 else np.nan))
     acc = {k: pd.DataFrame(v) for k, v in acc_rows.items()}
     return yields, acc
 
 
-def main():
+def main(which="base"):
+    global VARIANTS
+    VARIANTS = SETS[which]
     po.setup(); G = rs.G; dates = G["dates"]
     data, _ = pickle.loads(ps.PREPARED.read_bytes())
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
@@ -82,9 +104,9 @@ def main():
     print("【全池年配股：股利公告前一天的推估 vs 實際（2016 年起）】")
     arow = {}
     for name, a in acc.items():
-        e = a["誤差"]
+        e, e2 = a["誤差"], a["次年誤差"]
         arow[name] = dict(筆數=len(a), 平均絕對誤差=e.abs().mean(), 中位絕對誤差=e.abs().median(), 中位誤差=e.median(),
-                          誤差超過20pct比例=100 * (e.abs() > 20).mean())
+                          誤差超過20pct比例=100 * (e.abs() > 20).mean(), 對次年平均絕對誤差=e2.abs().mean(), 對次年中位誤差=e2.median())
     A = pd.DataFrame(arow).T
     print(A.round(1).to_string())
     print()
@@ -99,7 +121,7 @@ def main():
         po._applied.clear()
         po.CONFIGS[name] = {**dr.FINAL}
         po.apply(po.CONFIGS[name])
-        m = po.evaluate([name], "yieldvar")
+        m = po.evaluate([name], f"yieldvar_{which}")
         rows[name] = m.loc[name]
         kw = po.to_kw(po.CONFIGS[name])
         tr, eq = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, **kw)
@@ -109,9 +131,9 @@ def main():
                           平均持有日=int(cl["持有日"].mean()) if len(cl) else 0, 期末現金pct=round(100 * eq.attrs["cash"] / eq.iloc[-1], 1)))
         print(f"  {name} 完成", flush=True)
     M = pd.DataFrame(rows).T
-    M.round(2).to_csv(RESULTS / "yield_variant_summary.csv", encoding="utf-8-sig")
-    A.round(2).to_csv(RESULTS / "yield_variant_accuracy.csv", encoding="utf-8-sig")
-    pd.DataFrame(money).to_csv(RESULTS / "yield_variant_money.csv", index=False, encoding="utf-8-sig")
+    M.round(2).to_csv(RESULTS / f"yield_variant_{which}_summary.csv", encoding="utf-8-sig")
+    A.round(2).to_csv(RESULTS / f"yield_variant_{which}_accuracy.csv", encoding="utf-8-sig")
+    pd.DataFrame(money).to_csv(RESULTS / f"yield_variant_{which}_money.csv", index=False, encoding="utf-8-sig")
     print("\n【穩健度：前 7 年 20 情境、後 3 年延續／單獨】")
     print(M[po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())
     print("\n【500 萬 2017 起不追加】")
@@ -119,4 +141,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(sys.argv[1] if len(sys.argv) > 1 else "base")

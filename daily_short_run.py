@@ -1,4 +1,4 @@
-"""放空規則每日執行程式：殖利率 <1.5% ＋ 大盤空頭排列 ＋ 技術放空點，獲利 5% 回補，最多 5 檔（規則見 SHORT_RULES.md）。
+"""放空規則每日執行程式：殖利率 <1.5% ＋ 大盤空頭排列 ＋ 技術放空點，獲利 5% 回補，距最後回補日不足 30 天不空，最多 5 檔（規則見 SHORT_RULES.md）。
 
 做法：用規則從 2017-01 把歷史重跑到最新資料日，得到目前應有的空單，再依最新收盤判斷明天開盤要做的事。
 用法：
@@ -15,12 +15,12 @@ import pandas as pd
 import short_yield_study as sy
 from short_study import MARGIN_CALL, UPTICK_DROP
 
-YIELD_TH, REGIME, TARGET = 1.5, "R4 空頭排列MA5<20<60", 0.05
+YIELD_TH, REGIME, TARGET, MIN_GAP = 1.5, "R4 空頭排列MA5<20<60", 0.05, 30
 RULE_TEXT = """放空規則（最多 5 檔、每檔名目＝總資產 ÷ 5、放空與回補都隔天開盤）
   範圍：當天屬於 0050 或 0056 成分股（全部股票）
   放空：預估殖利率 < 1.5%（算不出的不空）且 加權指數空頭排列（MA5<MA20<MA60）
         且技術放空點任一：超買共振＋KD死叉＋年線下／爆量長上影線或爆量長黑／觸布林上軌＋K>70死叉／高檔區＋出貨訊號
-        同日多檔依殖利率低到高挑
+        同日多檔依殖利率低到高挑；距下一個除權息最後回補日不足 30 天的不放空
   回補：收盤較放空價跌 >= 5% 隔天開盤回補；除權息前 5 個交易日強制回補；維持率 130% 斷頭
   不停損、不加碼、不設持有期限、大盤轉多不回補"""
 
@@ -45,7 +45,7 @@ def main():
     regime = regimes[REGIME].reindex(dates).ffill().fillna(False).astype(bool)
     ma5, ma20, ma60 = (sy.sma(tai, n).reindex(dates).iloc[-1] for n in (5, 20, 60))
 
-    T, eq = sy.run_portfolio(data, dates, regimes, YIELD_TH, REGIME, False, capital=a.capital, target=TARGET)
+    T, eq = sy.run_portfolio(data, dates, regimes, YIELD_TH, REGIME, False, capital=a.capital, target=TARGET, min_days_to_force=MIN_GAP)
     value = eq.iloc[-1] * a.capital
     closed = T[T["原因"] != "期末"]
     opened = T[T["原因"] == "期末"]
@@ -91,7 +91,8 @@ def main():
             y = d["yield"].iloc[p]
             if not d["member"].iloc[p] or np.isnan(y) or y >= YIELD_TH or not d["sig"].iloc[p]:
                 continue
-            if d["block"].iloc[p]:
+            gap = d["days_to_force"].iloc[p]
+            if d["block"].iloc[p] or (not np.isnan(gap) and gap < MIN_GAP):
                 continue
             chg = d["df"]["close"].pct_change().iloc[p]
             cands.append((y, sid, d["name"], d["raw_close"].iloc[p], chg))
@@ -112,8 +113,10 @@ def main():
         y = d["yield"].iloc[p]
         if not d["member"].iloc[p] or np.isnan(y) or y >= YIELD_TH:
             continue
+        gap = d["days_to_force"].iloc[p]
         rows.append(dict(代號=sid, 名稱=d["name"], 收盤=round(d["raw_close"].iloc[p], 1), 預估殖利率=round(y, 2),
-                         今日放空訊號="是" if d["sig"].iloc[p] else "", 停券中="是" if d["block"].iloc[p] else ""))
+                         今日放空訊號="是" if d["sig"].iloc[p] else "", 停券中="是" if d["block"].iloc[p] else "",
+                         距最後回補日=("—" if np.isnan(gap) else f"{int(gap)}天" + ("（不足30天，不空）" if gap < MIN_GAP else ""))))
     w = pd.DataFrame(rows).sort_values("預估殖利率") if rows else pd.DataFrame()
     with pd.option_context("display.width", 200, "display.unicode.east_asian_width", True):
         print(w.to_string(index=False) if len(w) else "（無）")

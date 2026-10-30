@@ -21,6 +21,7 @@
       python short_yield_study.py targets    # 只跑停利掃描
       python short_yield_study.py hold       # 只跑持有上限掃描（10～45 個交易日）
       python short_yield_study.py add        # 只跑逆勢加碼一次（漲 5% 加碼）
+      python short_yield_study.py gap        # 只跑「距最後回補日不足 N 天不放空」
 輸出：results/short_yield_*.csv、results/short_yield_study.log
 """
 import time
@@ -98,7 +99,18 @@ def _prepare():
         dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
         ex_dates = res_all.loc[(res_all["stock_id"] == sid) & res_all["stock_or_cache_dividend"].astype(str).str.contains("息|權"), "date"]
         force, block = ex_dividend_blocks(df.index, ex_dates.tolist())
+        # 距下一個「最後回補日」的日曆天數（force 標在最後回補日前一天收盤；沒有已知的下一次 → NaN）
+        fdates = df.index[force.to_numpy()].values
+        if len(fdates):
+            pos = np.searchsorted(fdates, df.index.values)
+            nxt = fdates[np.minimum(pos, len(fdates) - 1)].astype("datetime64[ns]")
+            gap = (nxt - df.index.values).astype("timedelta64[D]").astype(float)
+            gap[pos >= len(fdates)] = np.nan
+        else:
+            gap = np.full(len(df), np.nan)
+        days_to_force = pd.Series(gap, index=df.index)
         data[sid] = {
+            "days_to_force": days_to_force,
             "df": df, "name": names.get(sid, ""), "raw_close": raw_close,
             "yield": 100 * dps / raw_close,
             "sig": short_entries(df)["任一"].fillna(False),
@@ -109,8 +121,11 @@ def _prepare():
     return data, dates, regimes, tai
 
 
-def entry_signal(d, y_th, rname, regimes):
+def entry_signal(d, y_th, rname, regimes, min_days_to_force=None):
     sig = d["sig"] & d["member"]
+    if min_days_to_force is not None:
+        gap = d["days_to_force"]
+        sig = sig & ~(gap < min_days_to_force).fillna(False)
     if y_th is not None:
         sig = sig & (d["yield"] < y_th)
     if rname is not None:
@@ -241,13 +256,13 @@ def per_trade(data, regimes, log):
 # ---------- B. 5 檔組合 ----------
 
 def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET, max_days=None,
-                  first=1.0, add_at=None, add_frac=0.0):
+                  first=1.0, add_at=None, add_frac=0.0, min_days_to_force=None):
     """名目＝進場時總資產 ÷ slots；最多 slots 檔；同日多檔依殖利率低到高。回傳 (交易, 每日權益)。"""
     span = dates[dates >= UNIVERSE_START]
     arr = {}
     for sid, d in data.items():
         df = d["df"].reindex(span)
-        sig = entry_signal(d, y_th, rname, regimes).reindex(span).fillna(False).to_numpy(dtype=bool)
+        sig = entry_signal(d, y_th, rname, regimes, min_days_to_force).reindex(span).fillna(False).to_numpy(dtype=bool)
         cov = cover_signal(d, rname, regimes, flip).reindex(span).fillna(False).to_numpy(dtype=bool)
         last = d["df"].index[-1]
         arr[sid] = {"open": df["open"].to_numpy(), "close": df["close"].to_numpy(), "close_ff": df["close"].ffill().to_numpy(),
@@ -542,6 +557,67 @@ def add_scan(data, dates, regimes, log, combos=(("殖利率<2%", "空頭排列")
     return S, PP
 
 
+# ---------- F. 距最後回補日不足 N 天不放空 ----------
+
+GAPS = (None, 15, 30, 45, 60)
+
+
+def gap_scan(data, dates, regimes, log, combos=(("殖利率<1.5%", "空頭排列"), ("殖利率<2%", "空頭排列"))):
+    """停利 5%、不轉多就補、不停損、不加碼、無上限；進場時距下一個除權息最後回補日不足 N 個日曆天就不放空。"""
+    years = (max(d["df"].index[-1] for d in data.values()) - UNIVERSE_START).days / 365.25
+    rows, prow, all_t = {}, {}, []
+    for yname, rname_s in combos:
+        y_th, rname = YIELDS[yname], REGIMES[rname_s]
+        for g in GAPS:
+            gname = "不限" if g is None else f"≥{g}天"
+            tr = []
+            for sid, d in data.items():
+                sig = entry_signal(d, y_th, rname, regimes, g)
+                if not sig.any():
+                    continue
+                t, _ = run_short(d["df"], sig, cover_signal(d, rname, regimes, False), d["start"], d["df"].index[-1],
+                                 tp=TARGET, force=d["force"], block=d["block"])
+                if len(t):
+                    t = t.assign(stock_id=sid)
+                    t["距最後回補日"] = d["days_to_force"].reindex(t["entry_date"]).to_numpy()
+                    tr.append(t)
+            T = pd.concat(tr, ignore_index=True)
+            r = T["return"]
+            wins, losses = r[r > 0], r[r <= 0]
+            T["年"] = T["entry_date"].dt.year
+            key = (yname, gname)
+            rows[key] = {
+                "筆數": len(r), "勝率%": 100 * (r > 0).mean(), "每筆期望值%": 100 * r.mean(),
+                "平均獲利%": 100 * wins.mean(), "平均虧損%": 100 * losses.mean() if len(losses) else 0,
+                "獲利因子": wins.sum() / -losses.sum() if len(losses) and losses.sum() < 0 else np.nan,
+                "平均天數": T["days"].mean(), "停利／強制回補／斷頭": "／".join(str(int((T["reason"] == k).sum())) for k in ("停利", "強制回補", "斷頭")),
+                "強制回補那些每筆%": 100 * T[T["reason"] == "強制回補"]["return"].mean() if (T["reason"] == "強制回補").any() else np.nan,
+                "最差一筆%": 100 * r.min(), "每檔每年貢獻%": 100 * r.sum() / T["stock_id"].nunique() / years,
+                "前段每筆%": 100 * T[T["年"] <= 2023]["return"].mean(), "後段每筆%": 100 * T[T["年"] >= 2024]["return"].mean(),
+            }
+            all_t.append(T.assign(殖利率=yname, 距回補日門檻=gname))
+            P, eq = run_portfolio(data, dates, regimes, y_th, rname, False, target=TARGET, min_days_to_force=g)
+            yrs = (eq.index[-1] - eq.index[0]).days / 365.25
+            prow[key] = {
+                "筆數": len(P), "勝率%": 100 * (P["報酬率"] > 0).mean(), "每筆%": 100 * P["報酬率"].mean(),
+                "期末萬": eq.iloc[-1] * CAPITAL / 1e4, "IRR%": 100 * (eq.iloc[-1] ** (1 / yrs) - 1),
+                "最大回撤%": 100 * (eq / eq.cummax() - 1).min(), "強制回補筆數": int(P["原因"].str.startswith("強制回補").sum()),
+                "斷頭": int(P["原因"].str.startswith("斷頭").sum()), "最差一筆萬": P["損益元"].min() / 1e4, "總損益萬": P["損益元"].sum() / 1e4,
+            }
+    S = pd.DataFrame(rows).T
+    S.index.names = ["殖利率", "距最後回補日"]
+    num = [c for c in S.columns if c != "停利／強制回補／斷頭"]
+    S[num] = S[num].astype(float).round(2)
+    S.to_csv(RESULTS / "short_yield_gap.csv", encoding="utf-8-sig")
+    pd.concat(all_t).to_csv(RESULTS / "short_yield_gap_trades.csv", index=False, encoding="utf-8-sig")
+    PP = pd.DataFrame(prow).T.astype(float).round(1)
+    PP.index.names = ["殖利率", "距最後回補日"]
+    PP.to_csv(RESULTS / "short_yield_gap_portfolio.csv", encoding="utf-8-sig")
+    log("\n【F. 距下一個除權息最後回補日不足 N 個日曆天就不放空｜每檔獨立】\n" + fmt(S))
+    log("\n【F. 距最後回補日門檻｜5 檔組合（500 萬）】\n" + fmt(PP))
+    return S, PP
+
+
 def main(argv=()):
     t0 = time.time()
     lines = []
@@ -561,6 +637,10 @@ def main(argv=()):
         ok = sum(((d["yield"] < y_th) & d["member"]).reindex(span).fillna(False).astype(int) for d in data.values())
         cnt[yname] = {"平均每天符合檔數": ok.mean(), "最少": ok.min(), "最多": ok.max()}
     log("\n各殖利率門檻下，成分股中符合的檔數（每天）：\n" + fmt(pd.DataFrame(cnt).T.round(1)))
+    if "gap" in argv:
+        gap_scan(data, dates, regimes, log)
+        (RESULTS / "short_yield_gap.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if "add" in argv:
         add_scan(data, dates, regimes, log)
         (RESULTS / "short_yield_add.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -578,6 +658,7 @@ def main(argv=()):
     target_scan(data, dates, regimes, log)
     hold_scan(data, dates, regimes, log)
     add_scan(data, dates, regimes, log)
+    gap_scan(data, dates, regimes, log)
     log(f"\n總耗時 {time.time() - t0:.0f} 秒")
     (RESULTS / "short_yield_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

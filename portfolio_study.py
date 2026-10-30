@@ -208,7 +208,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     defer_breakout / defer_reversal：停利類賣出成立時，若股價處於「突破狀態」（data[sid][defer_breakout]）就先不賣，
       等「反轉訊號」（data[sid][defer_reversal]）出現再賣；延後期間獲利回落到「門檻 − defer_floor」以下則保利賣出。
       突破／反轉陣列由 attach_fundamentals 產生：breakout_B1/B2/B3、reversal_Ra/Rb/Rc。
-    hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
+    hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；也可傳字串，指 data[sid] 裡每日門檻陣列的鍵；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
     time_add_trap：定期加碼改成「套牢後才啟動」——收盤低於平均成本 30% 以上才開始計時（回到 -30% 以內就歸零重算），
@@ -467,7 +467,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         continue
             elif gain >= target:
                 y = d["yield"][p]
-                keep = (hold_yield is not None and not np.isnan(y) and y >= hold_yield
+                hy_ = d[hold_yield][p] if isinstance(hold_yield, str) else hold_yield   # 字串＝每檔每日不同的門檻陣列
+                keep = (hold_yield is not None and not np.isnan(y) and not np.isnan(hy_) and y >= hy_
                         and not (hold_yield_cap is not None and gain >= hold_yield_cap))
                 if keep:
                     pos["tp_hit"] = True

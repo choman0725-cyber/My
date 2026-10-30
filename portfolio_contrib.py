@@ -1,0 +1,96 @@
+"""每年追加投入：初始 500 萬，2018 年起每年第一個交易日追加 100 萬或 50 萬（只買電子股）。
+
+報酬以 IRR（資金加權年化報酬）計算；比較基準為同時間、同金額買進 0050 / 0056 並持有。
+用法：python portfolio_contrib.py
+"""
+import pickle
+
+import numpy as np
+import pandas as pd
+
+import portfolio_study as ps
+from backtest import BUY_COST, RESULTS, ROOT
+from portfolio_electronics import CAPITAL, ELECTRONICS
+
+VERSIONS = {
+    "①解讀二｜0050區2檔＋0056區3檔·R5＋移出不佔名額": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
+                                                   "util_mode": "invested", "first": 0.8,
+                                                   "removal_exit": "tech_profit", "free_slot_removed": True}, (2, 3)),
+    "①解讀二｜0050區3檔＋0056區2檔·R5": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
+                                      "util_mode": "invested", "first": 0.8, "removal_exit": "tech_profit"}, (3, 2)),
+    "①解讀二｜0050區2檔＋0056區3檔·R1": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
+                                      "util_mode": "invested", "first": 0.8, "removal_exit": "immediate"}, (2, 3)),
+}
+ADDS = {"不追加": 0, "每年追加50萬": 500_000, "每年追加100萬": 1_000_000}
+
+
+def irr(flows, dates_, final_value, end):
+    t = np.array([(d - dates_[0]).days / 365.25 for d in dates_])
+    T = (end - dates_[0]).days / 365.25
+    f = lambda r: sum(-c * (1 + r) ** (T - ti) for c, ti in zip(flows, t)) + final_value
+    lo, hi = -0.9, 1.0
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if f(mid) > 0 else (lo, mid)
+    return 100 * mid
+
+
+def main():
+    cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
+    names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
+    cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
+    dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
+    data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
+    ps.attach_fundamentals(data, dates)
+    zone = {etf: {k: v.values for k, v in ps.membership(
+        cons[(cons["etf"] == etf) & cons["stock_id"].isin(ELECTRONICS)], dates).items()} for etf in ("0050", "0056")}
+    member = ps.membership(cons[cons["stock_id"].isin(ELECTRONICS)], dates)
+    sub = {k: v for k, v in data.items() if k in member}
+    first_day = {y: dates.get_indexer([dates[dates.year == y][0]])[0] for y in range(2018, dates[-1].year + 1)}
+    etf_px = {e: ps.load_prices(e)[0]["close"].reindex(dates).ffill() for e in ("0050", "0056")}
+
+    rows, holdings = {}, {}
+    for aname, amt in ADDS.items():
+        contrib = {n: amt / CAPITAL for n in first_day.values()} if amt else None
+        flow_dates = [dates[1]] + ([dates[n] for n in first_day.values()] if amt else [])
+        flows = [CAPITAL] + ([amt] * len(first_day) if amt else [])
+        invested = sum(flows)
+        for vname, (kw, split) in VERSIONS.items():
+            extra = {"slot_split": {"0050": (split[0], zone["0050"]), "0056": (split[1], zone["0056"])}}
+            tr, eq = ps.run(sub, member, dates, capital=CAPITAL, contributions=contrib, **kw, **extra)
+            final = eq.iloc[-1] * CAPITAL
+            # 回撤用「扣除追加資金」的淨值計算（時間加權）
+            units = eq.copy()
+            rets = eq.pct_change()
+            for n in (contrib or {}):
+                d = dates[n]
+                rets.loc[d] = (eq.loc[d] - contrib[n]) / eq.shift(1).loc[d] - 1
+            nav = (1 + rets.fillna(0)).cumprod()
+            rows[(aname, vname)] = {"總投入(萬)": invested / 1e4, "期末資產(萬)": final / 1e4,
+                                    "獲利(萬)": (final - invested) / 1e4, "IRR%": irr(flows, flow_dates, final, dates[-1]),
+                                    "最大回撤%": 100 * (nav / nav.cummax() - 1).min(),
+                                    "資金使用率%": eq.attrs["資金使用率%"]}
+            tr["名稱"] = tr["代號"].map(names)
+            holdings[(aname, vname)] = tr[tr["出場"].isna()].assign(投入=lambda x: x["投入"] * CAPITAL,
+                                                                    市值=lambda x: x["市值"] * CAPITAL)
+        for etf, px in etf_px.items():
+            shares = sum(c * (1 - BUY_COST) / px.loc[d] for c, d in zip(flows, flow_dates))
+            final = shares * px.iloc[-1]
+            pxn = px.loc[dates[1]:] / px.loc[dates[1]]
+            rows[(aname, f"{etf} 定期買進持有")] = {"總投入(萬)": invested / 1e4, "期末資產(萬)": final / 1e4,
+                                                 "獲利(萬)": (final - invested) / 1e4,
+                                                 "IRR%": irr(flows, flow_dates, final, dates[-1]),
+                                                 "最大回撤%": 100 * (pxn / pxn.cummax() - 1).min()}
+    table = pd.DataFrame(rows).T
+    table.index.names = ["追加", "版本"]
+    table.round(2).to_csv(RESULTS / "portfolio_contrib_summary.csv", encoding="utf-8-sig")
+    with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
+        print(table.round(1).to_string(), "\n")
+        for k, h in holdings.items():
+            if k[1].startswith("①解讀二｜0050區2檔＋0056區3檔·R5"):
+                print(f"【{k[0]}｜{k[1]} 目前持股】")
+                print(h[["名稱", "進場", "加碼", "投入", "市值", "報酬%"]].round(0).to_string(index=False), "\n")
+
+
+if __name__ == "__main__":
+    main()

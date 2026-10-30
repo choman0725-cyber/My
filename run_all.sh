@@ -27,3 +27,4 @@ python3 final_strategy.py
 python3 strategy_a.py
 python3 fill_study.py
 python3 portfolio_electronics.py
+python3 portfolio_contrib.py

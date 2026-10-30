@@ -41,6 +41,8 @@ UNI = ROOT / "data" / "universe"
 MAX_SLOTS, TARGET, MIN_YIELD = 5, 0.20, 5.0
 # 加碼方式同 strategy_a：首買 50%；曾跌到 -15% / -30% 後，出現爆量下影線/長紅且收盤仍低於首買價，加碼 30% / 20%
 FIRST, ADDS, ADD_STEPS = 0.50, (0.30, 0.20), (-0.15, -0.30)
+# 「套牢／久抱」定義（stale_free_slot、offset_only_stale 用）：持有超過 STALE_DAYS 天或虧損超過 STALE_LOSS
+STALE_DAYS, STALE_LOSS = 365, -0.30
 START = pd.Timestamp("2017-01-01")
 COOLDOWNS = (0, 3, 5, 7, 10, 15, 20, 30)
 
@@ -242,7 +244,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
 
     def is_stale(sid, pos, k, price):
         if trap_days is None:
-            return (dates[k] - dates[pos["start"]]).days > 365 or price / (pos["cost"] / pos["shares"]) - 1 < -0.30
+            return (dates[k] - dates[pos["start"]]).days > STALE_DAYS or price / (pos["cost"] / pos["shares"]) - 1 < STALE_LOSS
         return pos.get("trap_start") is not None and (dates[k] - pos["trap_start"]).days > trap_days
 
     def raw_open(sid, n):

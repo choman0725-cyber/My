@@ -19,6 +19,7 @@
   C. 停利掃描：<2%／<1.5% × 空頭排列，停利 5／7.5／10／12.5／15%。
 用法：python short_yield_study.py            # 全部
       python short_yield_study.py targets    # 只跑停利掃描
+      python short_yield_study.py hold       # 只跑持有上限掃描（10～45 個交易日）
 輸出：results/short_yield_*.csv、results/short_yield_study.log
 """
 import time
@@ -153,7 +154,7 @@ def per_trade(data, regimes, log):
 
 # ---------- B. 5 檔組合 ----------
 
-def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET):
+def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slots=SLOTS, target=TARGET, max_days=None):
     """名目＝進場時總資產 ÷ slots；最多 slots 檔；同日多檔依殖利率低到高。回傳 (交易, 每日權益)。"""
     span = dates[dates >= UNIVERSE_START]
     arr = {}
@@ -208,6 +209,8 @@ def run_portfolio(data, dates, regimes, y_th, rname, flip, capital=CAPITAL, slot
             reason = None
             if a["cover"][n]:
                 reason = "轉多回補"
+            if max_days is not None and n - p["n0"] + 1 >= max_days:
+                reason = f"滿{max_days}日"
             if ret <= -target:
                 reason = f"獲利{100 * target:g}%"
             if ret >= MARGIN_CALL:
@@ -318,6 +321,65 @@ def target_scan(data, dates, regimes, log, combos=(("殖利率<2%", "空頭排�
     return S, PP
 
 
+# ---------- D. 持有上限掃描 ----------
+
+HOLDS = (None, 10, 15, 20, 30, 45)
+
+
+def hold_scan(data, dates, regimes, log,
+              combos=(("殖利率<2%", "空頭排列", 0.05), ("殖利率<2%", "空頭排列", 0.10), ("殖利率<1.5%", "空頭排列", 0.05))):
+    """固定殖利率 × 空頭排列 × 停利，掃持有上限（交易日；到期隔天開盤回補）。"""
+    years = (max(d["df"].index[-1] for d in data.values()) - UNIVERSE_START).days / 365.25
+    rows, prow, all_t = {}, {}, []
+    for yname, rname_s, tp in combos:
+        y_th, rname = YIELDS[yname], REGIMES[rname_s]
+        for md in HOLDS:
+            hname = "無上限" if md is None else f"{md}日"
+            tr = []
+            for sid, d in data.items():
+                sig = entry_signal(d, y_th, rname, regimes)
+                if not sig.any():
+                    continue
+                t, _ = run_short(d["df"], sig, cover_signal(d, rname, regimes, False), d["start"], d["df"].index[-1],
+                                 tp=tp, max_days=md, force=d["force"], block=d["block"])
+                if len(t):
+                    tr.append(t.assign(stock_id=sid))
+            T = pd.concat(tr, ignore_index=True)
+            r = T["return"]
+            wins, losses = r[r > 0], r[r <= 0]
+            T["年"] = T["entry_date"].dt.year
+            key = (yname, f"停利{100 * tp:g}%", hname)
+            rows[key] = {
+                "筆數": len(r), "勝率%": 100 * (r > 0).mean(), "每筆期望值%": 100 * r.mean(),
+                "平均獲利%": 100 * wins.mean(), "平均虧損%": 100 * losses.mean() if len(losses) else 0,
+                "獲利因子": wins.sum() / -losses.sum() if len(losses) and losses.sum() < 0 else np.nan,
+                "平均天數": T["days"].mean(), "停利筆數": int((T["reason"] == "停利").sum()), "到期筆數": int((T["reason"] == "到期").sum()),
+                "到期每筆%": 100 * T[T["reason"] == "到期"]["return"].mean() if (T["reason"] == "到期").any() else np.nan,
+                "強制回補筆數": int((T["reason"] == "強制回補").sum()), "斷頭筆數": int((T["reason"] == "斷頭").sum()),
+                "最差一筆%": 100 * r.min(), "每檔每年貢獻%": 100 * r.sum() / T["stock_id"].nunique() / years,
+                "前段每筆%": 100 * T[T["年"] <= 2023]["return"].mean(), "後段每筆%": 100 * T[T["年"] >= 2024]["return"].mean(),
+            }
+            all_t.append(T.assign(殖利率=yname, 停利=f"{100 * tp:g}%", 持有上限=hname))
+            P, eq = run_portfolio(data, dates, regimes, y_th, rname, False, target=tp, max_days=md)
+            yrs = (eq.index[-1] - eq.index[0]).days / 365.25
+            prow[key] = {
+                "筆數": len(P), "勝率%": 100 * (P["報酬率"] > 0).mean(), "每筆%": 100 * P["報酬率"].mean(),
+                "期末萬": eq.iloc[-1] * CAPITAL / 1e4, "IRR%": 100 * (eq.iloc[-1] ** (1 / yrs) - 1),
+                "最大回撤%": 100 * (eq / eq.cummax() - 1).min(), "斷頭": int((P["原因"] == "斷頭").sum()),
+                "最差一筆萬": P["損益元"].min() / 1e4, "總損益萬": P["損益元"].sum() / 1e4,
+            }
+    S = pd.DataFrame(rows).T.astype(float).round(2)
+    S.index.names = ["殖利率", "停利", "持有上限"]
+    S.to_csv(RESULTS / "short_yield_hold.csv", encoding="utf-8-sig")
+    pd.concat(all_t).to_csv(RESULTS / "short_yield_hold_trades.csv", index=False, encoding="utf-8-sig")
+    PP = pd.DataFrame(prow).T.astype(float).round(1)
+    PP.index.names = ["殖利率", "停利", "持有上限"]
+    PP.to_csv(RESULTS / "short_yield_hold_portfolio.csv", encoding="utf-8-sig")
+    log("\n【D. 持有上限掃描（交易日，到期隔天開盤回補）：空頭排列、不轉多就補、不停損｜每檔獨立】\n" + fmt(S))
+    log("\n【D. 持有上限掃描｜5 檔組合（500 萬）】\n" + fmt(PP))
+    return S, PP
+
+
 def main(argv=()):
     t0 = time.time()
     lines = []
@@ -337,6 +399,10 @@ def main(argv=()):
         ok = sum(((d["yield"] < y_th) & d["member"]).reindex(span).fillna(False).astype(int) for d in data.values())
         cnt[yname] = {"平均每天符合檔數": ok.mean(), "最少": ok.min(), "最多": ok.max()}
     log("\n各殖利率門檻下，成分股中符合的檔數（每天）：\n" + fmt(pd.DataFrame(cnt).T.round(1)))
+    if "hold" in argv:
+        hold_scan(data, dates, regimes, log)
+        (RESULTS / "short_yield_hold.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if "targets" in argv:
         target_scan(data, dates, regimes, log)
         (RESULTS / "short_yield_targets.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -344,6 +410,7 @@ def main(argv=()):
     per_trade(data, regimes, log)
     portfolio(data, dates, regimes, log)
     target_scan(data, dates, regimes, log)
+    hold_scan(data, dates, regimes, log)
     log(f"\n總耗時 {time.time() - t0:.0f} 秒")
     (RESULTS / "short_yield_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 

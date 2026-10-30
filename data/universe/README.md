@@ -13,6 +13,7 @@
 | eps_all.csv | stock_id, date, value（FinMind TaiwanStockFinancialStatements，只取 type=EPS） | 6,549 |
 | dividend_all.csv | FinMind TaiwanStockDividend 原始欄位 | 1,769 |
 | dividend_result_all.csv | FinMind TaiwanStockDividendResult 原始欄位 | 1,760 |
+| financials_all.csv（選用） | date, stock_id, type, value, origin_name；FinMind TaiwanStockFinancialStatements 的 Revenue／GrossProfit／OperatingIncome／IncomeAfterTaxes／NetIncome／EPS 單季值，`python fetch_financials.py` 產生，YIELD_MODE=margin 時用 | — |
 
 期間 2015-01-01～2026-10-29。
 

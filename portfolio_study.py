@@ -18,14 +18,20 @@
   再多投入「閒置現金 / 持有檔數」；閒置現金 = 現金 − 各檔尚未用掉的加碼額度。
 預估股利（適用年配、半年配、季配）：
   - 若該股過去每年只配一次，且下一次股利已公告未除息 → 用公告值
-  - 否則 = 最近四季 EPS × 近 3 個已知年度平均配息率
-  年度配息率只在該年度最後一次公告、且隔年 4/1 之後才視為已知。
-資料：data/universe/ 下的 constituents.csv、prices/<代號>.csv、eps_all.csv、dividend_all.csv
+  - 否則 = 預估 EPS × 近 3 個已知年度平均配息率
+    預估 EPS = 最近四季 EPS（YIELD_MODE=eps，預設）
+             = 最近四季 EPS × 利潤率調整係數（YIELD_MODE=margin，需 data/universe/financials_all.csv）
+    利潤率調整係數 = 近 2 季的毛利率、營業利益率、淨利率各除以近四季同一利潤率，三者平均，夾在 0.5～1.5。
+      意義：近四季營收用「最近半年的獲利能力」重算一遍；利潤率在擴張時係數 > 1，收縮時 < 1。
+  年度配息率只在該年度最後一次公告、且隔年 4/1 之後才視為已知；利潤率同 EPS 用法定公布期限。
+資料：data/universe/ 下的 constituents.csv、prices/<代號>.csv、eps_all.csv、dividend_all.csv、
+  financials_all.csv（利潤率模式用，python fetch_financials.py 產生）
 價格：預設用還原價（含現金股利）；PRICE_MODE=raw 用原始價。
 
 會分別跑三種選股範圍：0050＋0056、只看 0050、只看 0056。
 用法：python portfolio_study.py
 """
+import os
 import sys
 from pathlib import Path
 
@@ -38,6 +44,15 @@ from yield_entry_study import entries
 from yield_study import REPORT_DEADLINE
 
 UNI = ROOT / "data" / "universe"
+# 預估 EPS 的算法："eps"＝近四季 EPS；"margin"＝近四季 EPS × 利潤率調整係數（毛利率、營業利益率、淨利率）
+YIELD_MODE = os.environ.get("YIELD_MODE", "eps")
+assert YIELD_MODE in ("eps", "margin"), YIELD_MODE
+# prepare() 的快取檔，依模式分開以免混用
+PREPARED = RESULTS / ("portfolio_prepared.pkl" if YIELD_MODE == "eps" else f"portfolio_prepared_{YIELD_MODE}.pkl")
+# 利潤率調整係數：近 MARGIN_RECENT_Q 季 vs 近四季，三個利潤率平均後夾在 MARGIN_CLIP
+MARGIN_RECENT_Q, MARGIN_CLIP = 2, (0.5, 1.5)
+MARGIN_TYPES = {"Revenue": "revenue", "GrossProfit": "gross", "OperatingIncome": "op",
+                "IncomeAfterTaxes": "net", "NetIncome": "net_alt"}
 MAX_SLOTS, TARGET, MIN_YIELD = 5, 0.20, 5.0
 # 加碼方式同 strategy_a：首買 50%；曾跌到 -15% / -30% 後，出現爆量下影線/長紅且收盤仍低於首買價，加碼 30% / 20%
 FIRST, ADDS, ADD_STEPS = 0.50, (0.30, 0.20), (-0.15, -0.30)
@@ -98,10 +113,57 @@ def dividend_events(div_all, stock_id, res_all=None):
     return d[["fy", "cash", "announced", "ex_date"]].sort_values("announced").reset_index(drop=True)
 
 
-def forward_dividend(dates, eps, div, payout_years=3):
+def margin_table(fin_all, stock_id):
+    """單季營收、毛利、營業利益、稅後淨利（FinMind TaiwanStockFinancialStatements 原始欄位，financials_all.csv）。
+    回傳欄位 quarter_end, published, revenue, gross, op, net；published 同 eps_table 用法定公布期限。"""
+    cols = ["quarter_end", "published", "revenue", "gross", "op", "net"]
+    f = fin_all[(fin_all["stock_id"].astype(str) == stock_id) & fin_all["type"].isin(MARGIN_TYPES)]
+    if f.empty:
+        return pd.DataFrame(columns=cols)
+    m = f.pivot_table(index="date", columns="type", values="value", aggfunc="last").rename(columns=MARGIN_TYPES)
+    m.index = pd.to_datetime(m.index)
+    for c in MARGIN_TYPES.values():
+        if c not in m:
+            m[c] = np.nan
+    m["net"] = m["net"].fillna(m["net_alt"])   # 舊年度只有 NetIncome 欄位
+    m = m[m.index.month.isin(REPORT_DEADLINE) & (m["revenue"] > 0)].sort_index()
+    m["published"] = [pd.Timestamp(q.year + (q.month == 12), *REPORT_DEADLINE[q.month]) for q in m.index]
+    return m.reset_index().rename(columns={"date": "quarter_end"})[cols]
+
+
+def margin_factor(dates, m, recent_q=None, clip=None):
+    """每日「利潤率調整係數」。對每個已知季度 k：
+        係數 = mean( 近 recent_q 季毛利率 / 近四季毛利率, 近 recent_q 季營業利益率 / 近四季營業利益率,
+                     近 recent_q 季淨利率 / 近四季淨利率 )，夾在 clip 之間。
+    各利潤率都用「金額合計 / 營收合計」（營收加權），近四季的某個利潤率 <= 0 時該項不計；三項都算不出就是 NaN（視同 1）。
+    用法定公布期限決定哪一天起算哪一季，和 EPS 一樣沒有前視。"""
+    recent_q = recent_q or MARGIN_RECENT_Q
+    lo, hi = clip or MARGIN_CLIP
+    out = pd.Series(np.nan, index=dates)
+    if len(m) < 4:
+        return out
+    v = m[["revenue", "gross", "op", "net"]].to_numpy(dtype=float)
+    fac = np.full(len(m) + 1, np.nan)   # fac[k]＝已知 k 季時的係數
+    for k in range(4, len(m) + 1):
+        ttm, rec = v[k - 4:k].sum(axis=0), v[k - recent_q:k].sum(axis=0)
+        ratios = []
+        for i in (1, 2, 3):
+            tm, rm = ttm[i] / ttm[0], rec[i] / rec[0]
+            if np.isfinite(tm) and np.isfinite(rm) and tm > 0:
+                ratios.append(rm / tm)
+        if ratios:
+            fac[k] = min(max(float(np.mean(ratios)), lo), hi)
+    k = np.searchsorted(m["published"].values, dates.values, side="right")
+    out[:] = fac[k]
+    return out
+
+
+def forward_dividend(dates, eps, div, payout_years=3, factor=None):
+    """預估年度現金股利。factor：每日利潤率調整係數（margin_factor），None 或 NaN 視同 1（純 EPS 法）。"""
     out = pd.Series(np.nan, index=dates)
     if eps.empty or div.empty:
         return out
+    fac = np.ones(len(dates)) if factor is None else np.nan_to_num(np.asarray(factor, dtype=float), nan=1.0)
     annual_eps = eps.groupby("fy")["eps"].agg(["sum", "size"])
     annual_eps = annual_eps[annual_eps["size"] == 4]["sum"]
     by_fy = div.groupby("fy").agg(cash=("cash", "sum"), last_ann=("announced", "max"), n=("cash", "size"))
@@ -109,7 +171,7 @@ def forward_dividend(dates, eps, div, payout_years=3):
     by_fy["known_from"] = [max(a, pd.Timestamp(fy + 1, 4, 1)) for fy, a in zip(by_fy.index, by_fy["last_ann"])]
     annual_payer = (by_fy["n"] == 1).all()
     eps_pub, eps_val = eps["published"].values, eps["eps"].values
-    for t in dates:
+    for i, t in enumerate(dates):
         if annual_payer:
             pending = div[(div["announced"] <= t) & (div["ex_date"] > t)]
             if len(pending):
@@ -121,7 +183,7 @@ def forward_dividend(dates, eps, div, payout_years=3):
         ttm = eps_val[k - 4:k].sum()
         known = by_fy[(by_fy["known_from"] <= t) & by_fy["payout"].notna()]["payout"].iloc[-payout_years:]
         if len(known):
-            out[t] = max(ttm, 0) * known.clip(0, 2).mean()
+            out[t] = max(ttm, 0) * fac[i] * known.clip(0, 2).mean()
     return out
 
 
@@ -146,6 +208,12 @@ def prepare(stock_ids, dates):
     eps_all = pd.read_csv(UNI / "eps_all.csv")
     div_all = pd.read_csv(UNI / "dividend_all.csv")
     res_all = pd.read_csv(UNI / "dividend_result_all.csv")
+    fin_all = None
+    if YIELD_MODE == "margin":
+        path = UNI / "financials_all.csv"
+        if not path.exists():
+            sys.exit(f"YIELD_MODE=margin 需要 {path}，請先執行 python fetch_financials.py")
+        fin_all = pd.read_csv(path)
     data, skipped = {}, []
     for sid in stock_ids:
         loaded = load_prices(sid)
@@ -153,7 +221,8 @@ def prepare(stock_ids, dates):
             skipped.append(sid)
             continue
         df, raw_close = loaded
-        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
+        factor = margin_factor(df.index, margin_table(fin_all, sid)) if fin_all is not None else None
+        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all), factor=factor)
         sigs, add = entries(df)
         d = df.reindex(dates)
         last = d["close"].last_valid_index()
@@ -168,6 +237,8 @@ def prepare(stock_ids, dates):
             "add": add.reindex(dates).fillna(False).astype(bool).values,
             "yield": (100 * dps / raw_close).reindex(dates).values,
         }
+        if factor is not None:
+            data[sid]["margin_factor"] = factor.reindex(dates).values
     return data, skipped
 
 
@@ -698,7 +769,7 @@ def main():
     universes = {"0050＋0056": ("0050", "0056"), "只看0050": ("0050",), "只看0056": ("0056",)}
     all_ids = sorted(constituents["stock_id"].unique())
     import pickle
-    cache = RESULTS / "portfolio_prepared.pkl"
+    cache = PREPARED
     if cache.exists() and cache.stat().st_mtime > max(f.stat().st_mtime for f in UNI.rglob("*.csv")) \
             and cache.stat().st_mtime > Path(__file__).stat().st_mtime:
         data, skipped = pickle.loads(cache.read_bytes())

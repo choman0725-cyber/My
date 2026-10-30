@@ -125,7 +125,7 @@ def market_stats(universe="all"):
     if key not in _mk:
         dates = G["dates"]
         if universe == "all":
-            data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
+            data, _ = pickle.loads(ps.PREPARED.read_bytes())
             cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
             mem = ps.membership(cons, dates)
             Y = pd.DataFrame({s: np.where(mem[s].values, data[s]["yield"][:len(dates)], np.nan) for s in data if s in mem}, index=dates)

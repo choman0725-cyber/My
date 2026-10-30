@@ -47,7 +47,7 @@ def setup():
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
-    data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
+    data, _ = pickle.loads(ps.PREPARED.read_bytes())
     ps.attach_fundamentals(data, dates)
     zone = {e: {k: v.values for k, v in ps.membership(
         cons[(cons["etf"] == e) & cons["stock_id"].isin(ELECTRONICS)], dates).items()} for e in ("0050", "0056")}

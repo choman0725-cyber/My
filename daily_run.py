@@ -9,6 +9,10 @@
   python daily_run.py --asof 2026-06-30                  # 假裝今天是 2026-06-30（回看當時的建議）
 資料更新：data/universe/prices/*.csv、eps_all.csv、dividend_all.csv 更新後先重跑
   python portfolio_electronics.py 以重建 results/portfolio_prepared.pkl，再執行本程式。
+利潤率模式（預估 EPS 再乘上毛利率／營業利益率／淨利率的調整係數，見 portfolio_study.py 檔頭）：
+  python fetch_financials.py 抓 financials_all.csv 後，
+  YIELD_MODE=margin python portfolio_electronics.py 重建 portfolio_prepared_margin.pkl，再
+  YIELD_MODE=margin python daily_run.py。未回測前只供參考，正式版仍是 YIELD_MODE=eps。
 """
 import argparse
 import copy
@@ -103,6 +107,8 @@ def main():
     last = dates[-1]; p = len(dates) - 1
     value = eq.iloc[-1] * a.capital
     print(RULE_TEXT)
+    if ps.YIELD_MODE == "margin":
+        print("※ 利潤率模式：預估 EPS ＝ 近四季 EPS × 利潤率調整係數（近 2 季毛利率／營業利益率／淨利率 vs 近四季）")
     print(f"\n資料最後日期：{last.date()}　起始 {dates[s_n].date()}　投入 {a.capital / 1e4:,.0f} 萬"
           + (f"＋追加 {sum(sched.values()) / 1e4:,.0f} 萬" if sched else ""))
     print(f"目前總資產 {value / 1e4:,.0f} 萬（現金 {cash0 * a.capital / 1e4:,.0f} 萬，{100 * cash0 * a.capital / value:.0f}%）")
@@ -126,7 +132,9 @@ def main():
             status.append("最新一天無報價，引擎暫不處理")
         rows.append(dict(代號=sid, 名稱=names.get(sid, ""), 進場=dates[q["start"]].date(), 持有日=held, 股數=round(q["shares"] * a.capital),
                          平均成本=round(avg, 1), 現價=px, 損益pct=round(100 * gain, 1), 市值萬=round(q["shares"] * px * a.capital / 1e4, 1),
-                         預估殖利率=None if np.isnan(y) else round(y, 2), 已加碼=q["adds"], 定期加碼=q.get("time_adds", 0),
+                         預估殖利率=None if np.isnan(y) else round(y, 2),
+                         **({"利潤率係數": round(d["margin_factor"][p], 2)} if "margin_factor" in d else {}),
+                         已加碼=q["adds"], 定期加碼=q.get("time_adds", 0),
                          首買價=round(q["first"], 1), 距首買pct=round(100 * (px / q["first"] - 1), 1), 狀態="；".join(status)))
     hold = pd.DataFrame(rows)
     with pd.option_context("display.width", 300, "display.max_columns", 30, "display.unicode.east_asian_width", True):
@@ -161,6 +169,7 @@ def main():
         if sid in pos0 or np.isnan(y) or y < thr[p] or not G["member"][sid].iloc[p]:
             continue
         watch.append(dict(代號=sid, 名稱=names.get(sid, ""), 收盤=d["close_ff"][p], 預估殖利率=round(y, 2),
+                          **({"利潤率係數": round(d["margin_factor"][p], 2)} if "margin_factor" in d else {}),
                           今日買訊="是" if d["buy"][p] else "", 接近買點="是" if d["near_near1"][p] else ""))
     w = pd.DataFrame(watch).sort_values("預估殖利率", ascending=False) if watch else pd.DataFrame()
     with pd.option_context("display.width", 300, "display.unicode.east_asian_width", True):

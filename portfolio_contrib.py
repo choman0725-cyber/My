@@ -52,7 +52,7 @@ def main():
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
-    data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
+    data, _ = pickle.loads(ps.PREPARED.read_bytes())
     ps.attach_fundamentals(data, dates)
     zone = {etf: {k: v.values for k, v in ps.membership(
         cons[(cons["etf"] == etf) & cons["stock_id"].isin(ELECTRONICS)], dates).items()} for etf in ("0050", "0056")}

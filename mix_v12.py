@@ -21,11 +21,22 @@ _orig_run = ps.run
 _cur = {}
 
 
+def zone_member(etf):
+    """只看某一檔 ETF（0050 / 0056）成分股的 member；None＝兩者皆可。"""
+    if etf is None:
+        return rs.G["member"]
+    key = f"member_{etf}"
+    if key not in rs.G:
+        rs.G[key] = {k: pd.Series(v, index=rs.G["dates"]) for k, v in rs.G["zone"][etf].items()}
+    return rs.G[key]
+
+
 def blended_run(data, member, dates, **kw):
-    cfg1, cfg2, w = _cur["mix"]
-    po.apply(cfg1); tr1, eq1 = _orig_run(data, member, dates, **kw, **po.to_kw(cfg1))
-    po.apply(cfg2); tr2, eq2 = _orig_run(data, member, dates, **kw, **po.to_kw(cfg2))
-    return pd.concat([tr1.assign(帳戶="V1"), tr2.assign(帳戶="V2")], ignore_index=True), w * eq1 + (1 - w) * eq2
+    cfg1, cfg2, w, *etfs = _cur["mix"]
+    e1, e2 = etfs if etfs else (None, None)
+    po.apply(cfg1); tr1, eq1 = _orig_run(data, zone_member(e1), dates, **kw, **po.to_kw(cfg1))
+    po.apply(cfg2); tr2, eq2 = _orig_run(data, zone_member(e2), dates, **kw, **po.to_kw(cfg2))
+    return pd.concat([tr1.assign(帳戶="帳戶1"), tr2.assign(帳戶="帳戶2")], ignore_index=True), w * eq1 + (1 - w) * eq2
 
 
 def _prep(name):

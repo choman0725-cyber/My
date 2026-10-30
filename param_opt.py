@@ -206,23 +206,32 @@ def stage2():
         sub = s1[s1["底"] == bname]
         base_score = sub[sub["是底值"]]["樣本內分數"].iloc[0]
         # 每個參數挑樣本內分數最高的值；只保留比底值好 >= 0.5 分的參數
-        improv = {}
+        improv, second = {}, {}
         for param in GRID:
-            rows = sub[sub["參數"] == LABEL[param]]
+            rows = sub[(sub["參數"] == LABEL[param]) & ~sub["是底值"]].sort_values("樣本內分數", ascending=False)
+            rows = rows[rows["樣本內分數"] - base_score >= 0.5]
             if rows.empty:
                 continue
-            best = rows.sort_values("樣本內分數", ascending=False).iloc[0]
-            if best["樣本內分數"] - base_score >= 0.5 and not best["是底值"]:
-                improv[param] = (parse(param, best["值"]), best["樣本內分數"] - base_score)
+            best = rows.iloc[0]
+            improv[param] = (parse(param, best["值"]), best["樣本內分數"] - base_score)
+            if len(rows) > 1:
+                second[param] = parse(param, rows.iloc[1]["值"])
         print(f"{bname}：底分數 {base_score:.2f}，有改善的參數：", {LABEL[k]: v for k, v in improv.items()}, flush=True)
         params = sorted(improv, key=lambda k: -improv[k][1])
-        # 全部套用、依改善幅度逐步累加、以及改善最大的前 4 個參數「底值 / 最佳值」全交叉
+        # 依改善幅度逐步累加、改善最大的前 4 個參數「底值 / 最佳值」全交叉、
+        # 以及前 4 個參數改用次佳值的版本（避免只挑到樣本內最尖的那個值）
         combos = []
         for i in range(1, len(params) + 1):
             combos.append({p: improv[p][0] for p in params[:i]})
         top = params[:4]
         for mask in itertools.product([0, 1], repeat=len(top)):
             combos.append({p: improv[p][0] for p, m_ in zip(top, mask) if m_})
+        for p in top:
+            if p in second:
+                combos.append({**{q: improv[q][0] for q in top}, p: second[p]})
+                combos.append({**{q: improv[q][0] for q in top if q != "defer"}, p: second[p]})
+        # 不含延後賣出（B3×Rb 在後 3 年沒有優勢）的全套用版本
+        combos.append({p: improv[p][0] for p in params if p != "defer"})
         seen = set()
         for c in combos:
             cfg = {**base, **c}

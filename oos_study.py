@@ -85,7 +85,7 @@ def one(task):
         fdates = [dates[s_n]] + [dates[n] for n in (contrib or {})]
         dd = nav_dd(eq / CAPITAL, contrib)
         t = tr
-    held = (t["出場"].fillna(dates[e_n]) - t["進場"]).dt.days
+    held = (pd.to_datetime(t["出場"]).fillna(dates[e_n]) - pd.to_datetime(t["進場"])).dt.days if len(t) else pd.Series(dtype=float)
     return task, irr(flows, fdates, eq.iloc[-1], dates[e_n]), dd, held.max() / 365 if len(held) else 0
 
 

@@ -181,7 +181,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
-        defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None):
+        defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
+        tech_exit=None, tech_exit_profit=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -210,6 +211,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
+    tech_exit：搭配 hold_yield 使用。殖利率已跌破 hold_yield（不再便宜）且當天出現技術賣訊
+      （data[sid][tech_exit]，例如 tech_sell＝爆量上影線/爆量長黑、reversal_Rb＝跌破月線）就隔天賣出，
+      不看獲利門檻；tech_exit_profit=True 時另外要求扣除賣出成本後不賠錢。停利門檻仍同時有效
+      （要純技術出場就把 TARGET 設很大）。
     lot_mode：整張限制（1 張 = 1000 股，依 capital 與原始股價換算）。None＝不限制（可零股）；
       "skip"＝不足一張就放棄，夠的話無條件捨去到整張；
       "borrow"＝不足一張時借用下一次追加資金（現金可為負，下限 = 下一次追加金額），沒有未來追加則放棄。
@@ -380,6 +385,13 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 c_prev / (pos["cost"] / pos["shares"]) - 1
             if gain < TARGET and not has_cand:
                 gain = -1  # 降低停利需要有好標的可換
+            if tech_exit and hold_yield is not None and d[tech_exit][p]:
+                y_ = d["yield"][p]
+                if (np.isnan(y_) or y_ < hold_yield) and \
+                        (not tech_exit_profit or c_prev * (1 - SELL_COST) >= pos["cost"] / pos["shares"]):
+                    close_out(sid, n, o, "殖利率<門檻＋技術賣訊")
+                    sold_today.add(sid)
+                    continue
             if gain >= target:
                 y = d["yield"][p]
                 keep = (hold_yield is not None and not np.isnan(y) and y >= hold_yield

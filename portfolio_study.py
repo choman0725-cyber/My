@@ -182,7 +182,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
-        tech_exit=None, tech_exit_profit=False):
+        tech_exit=None, tech_exit_profit=False, tranches=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -211,6 +211,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
+    tranches：分批出場，取代停利＋hold_yield 的單一賣點。例如 [(0.5, 0.10, 5.0), (0.5, 0.20, 4.5)]＝
+      獲利 >= 10% 且殖利率 < 5% 先賣一半；剩下一半獲利 >= 20% 且殖利率 < 4.5% 再賣。
+      分批賣出後部位仍佔名額、仍可依原規則加碼；其他出場（EPS 轉負、移出名單等）照舊整筆出清。
     tech_exit：搭配 hold_yield 使用。殖利率已跌破 hold_yield（不再便宜）且當天出現技術賣訊
       （data[sid][tech_exit]，例如 tech_sell＝爆量上影線/爆量長黑、reversal_Rb＝跌破月線）就隔天賣出，
       不看獲利門檻；tech_exit_profit=True 時另外要求扣除賣出成本後不賠錢。停利門檻仍同時有效
@@ -392,7 +395,29 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     close_out(sid, n, o, "殖利率<門檻＋技術賣訊")
                     sold_today.add(sid)
                     continue
-            if gain >= target:
+            if tranches:
+                k = pos.get("tranche", 0)
+                if k < len(tranches):
+                    frac, tg, hy = tranches[k]
+                    y = d["yield"][p]
+                    if c_prev / (pos["cost"] / pos["shares"]) - 1 >= tg and (np.isnan(y) or y < hy):
+                        if k == len(tranches) - 1:
+                            close_out(sid, n, o, f"停利第{k + 1}批")
+                            sold_today.add(sid)
+                            continue
+                        sell_frac = frac / sum(f for f, _, _ in tranches[k:])
+                        sh, cost_part = pos["shares"] * sell_frac, pos["cost"] * sell_frac
+                        proceeds = sh * o * (1 - SELL_COST)
+                        cash += proceeds
+                        trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": f"停利第{k + 1}批",
+                                       "加碼": pos["adds"], "投入": cost_part, "回收": proceeds, "被踢出": pos["removed"],
+                                       "報酬%": 100 * (proceeds / cost_part - 1), "最深套牢%": 100 * (pos["low"] / pos["first"] - 1),
+                                       "持有日": (dates[n] - dates[pos["start"]]).days})
+                        pos["shares"] -= sh
+                        pos["cost"] -= cost_part
+                        pos["tranche"] = k + 1
+                        continue
+            elif gain >= target:
                 y = d["yield"][p]
                 keep = (hold_yield is not None and not np.isnan(y) and y >= hold_yield
                         and not (hold_yield_cap is not None and gain >= hold_yield_cap))

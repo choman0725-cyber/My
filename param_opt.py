@@ -40,7 +40,7 @@ DEFERS = {"不延後": {}, "B3×Rb": {"defer_breakout": "breakout_B3", "defer_re
 BASE_A = dict(min_yield=5.0, entry="任一", target=0.20, hold_yield=5.0, cap=None, floor=None, first=0.50,
               adds="A -15/-30 加30/20", time_add_days=182, time_add_amount=0.20, max_slots=5, split="不分區",
               stale=True, stale_days=365, stale_loss=-0.30, eps_exit=True, removal=True, defer="不延後",
-              tech_exit=None, tech_profit=False)
+              tech_exit=None, tech_profit=False, tranches=None)
 BASE_B = {**BASE_A, "cap": 0.40, "split": "0050區2＋0056區3"}
 BASES = {"底A 第1名Y1不分區": BASE_A, "底B 第2名Y3封頂2+3": BASE_B}
 
@@ -94,6 +94,8 @@ def to_kw(cfg):
         if cfg["floor"] is not None:
             kw["hold_yield_floor"] = cfg["floor"]
     kw.update(DEFERS[cfg["defer"]])
+    if cfg.get("tranches"):
+        kw["tranches"] = cfg["tranches"]
     if cfg.get("tech_exit"):
         kw.update(tech_exit=cfg["tech_exit"], tech_exit_profit=cfg["tech_profit"])
     return kw

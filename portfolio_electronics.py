@@ -33,11 +33,13 @@ BASES = {
 }
 OFFSETS = {
     "": {},
-    "＋以盈補虧": {"offset_loss": True},
-    "＋以盈補虧(一半獲利)": {"offset_loss": True, "offset_frac": 0.5},
     "＋以盈補虧(僅套1年或虧30%)": {"offset_loss": True, "offset_only_stale": True},
+    "＋以盈補虧(僅變壞)": {"offset_loss": True, "offset_only_bad": True},
+    "＋變壞且虧損直接出場": {"exit_bad": True},
 }
-VARIANTS = {b + o: {**bk, **ok} for b, bk in BASES.items() for o, ok in OFFSETS.items()}
+SLOTS = {"": {}, "＋套牢不佔名額": {"stale_free_slot": True}}
+VARIANTS = {b + sl + o: {**bk, **slk, **ok} for b, bk in BASES.items() for sl, slk in SLOTS.items()
+            for o, ok in OFFSETS.items()}
 
 
 def main():
@@ -47,7 +49,7 @@ def main():
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
     cache = RESULTS / "portfolio_prepared.pkl"
     data, _ = pickle.loads(cache.read_bytes()) if cache.exists() else ps.prepare(sorted(cons["stock_id"].unique()), dates)
-    print("（快取資料）" if cache.exists() else "")
+    ps.attach_fundamentals(data, dates)
 
     raw_last = {sid: pd.read_csv(ps.UNI / "prices" / f"{sid}.csv")["close"].iloc[-1] for sid in ELECTRONICS
                 if (ps.UNI / "prices" / f"{sid}.csv").exists()}

@@ -173,7 +173,7 @@ def prepare(stock_ids, dates):
 
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
-        offset_frac=1.0, offset_only_stale=False):
+        offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -184,7 +184,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       部位的整數張（1 張 = 1000 股，依 capital 與原始股價換算），平掉的虧損不超過這筆獲利；
       虧損幅度最大的先平，有剩再平下一檔。
     offset_frac：只拿獲利的這個比例去補虧（例如 0.5 = 一半）。
-    offset_only_stale：只處理「持有超過 1 年」或「虧損超過 30%」的部位。"""
+    offset_only_stale：只處理「持有超過 1 年」或「虧損超過 30%」的部位。
+    offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
+    exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
+    stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
+    使用 offset_only_bad / exit_bad 前須先呼叫 attach_fundamentals(data, dates)。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
@@ -207,6 +211,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 continue
             avg = pos["cost"] / pos["shares"]
             if offset_only_stale and not ((dates[n] - dates[pos["start"]]).days > 365 or o / avg - 1 < -0.30):
+                continue
+            if offset_only_bad and not data[sid]["bad"][n - 1]:
                 continue
             if o * (1 - SELL_COST) < avg:
                 losers.append((o / avg - 1, sid))
@@ -272,6 +278,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 close_out(sid, n, o, "停利")
                 sold_today.add(sid)
                 continue
+            if exit_bad and d["bad"][p] and c_prev < pos["cost"] / pos["shares"]:
+                close_out(sid, n, o, "基本面變壞出場")
+                sold_today.add(sid)
+                continue
             pos["removed"] |= not mem.get(sid, no)[p]
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
@@ -290,7 +300,13 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             before = set(positions)
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)
-        free = MAX_SLOTS - len(positions)
+        if stale_free_slot:
+            counted = sum(1 for s_, q in positions.items()
+                          if not ((dates[p] - dates[q["start"]]).days > 365
+                                  or data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 < -0.30))
+        else:
+            counted = len(positions)
+        free = MAX_SLOTS - counted
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0
         if free > 0:
@@ -333,6 +349,25 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     eq = pd.Series(equity, index=dates[1:])
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
     return pd.DataFrame(trades, columns=cols), eq
+
+
+def attach_fundamentals(data, dates):
+    """在 data[sid]["bad"] 標記每日是否「基本面變壞」：最近兩季已公布的單季 EPS 都比去年同季低，或預估殖利率 < 3%。"""
+    eps_all = pd.read_csv(UNI / "eps_all.csv")
+    for sid, d in data.items():
+        e = eps_table(eps_all, sid)
+        bad = np.zeros(len(dates), bool)
+        if len(e) >= 6:
+            prev = e.set_index("quarter_end")["eps"]
+            yoy_down = [(q - pd.DateOffset(years=1)) in prev.index and v < prev[q - pd.DateOffset(years=1)]
+                        for q, v in zip(e["quarter_end"], e["eps"])]
+            e = e.assign(down=yoy_down)
+            e["two_down"] = e["down"] & e["down"].shift(1, fill_value=False)
+            flag = pd.Series(e["two_down"].values, index=e["published"]).groupby(level=0).last()
+            bad = flag.reindex(dates.union(flag.index)).ffill().reindex(dates).fillna(False).astype(bool).values
+        y = d["yield"]
+        d["bad"] = bad | (~np.isnan(y) & (y < 3))
+    return data
 
 
 def stats(equity):

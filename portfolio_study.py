@@ -178,7 +178,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
-        start_n=1, end_n=None):
+        start_n=1, end_n=None, lot_mode=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -198,6 +198,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    lot_mode：整張限制（1 張 = 1000 股，依 capital 與原始股價換算）。None＝不限制（可零股）；
+      "skip"＝不足一張就放棄，夠的話無條件捨去到整張；
+      "borrow"＝不足一張時借用下一次追加資金（現金可為負，下限 = 下一次追加金額），沒有未來追加則放棄。
     start_n / end_n：只在 dates[start_n]～dates[end_n] 之間交易與計算（資產曲線也只含這段），
       用來做樣本內（例如只跑前 7 年）與不同起始日的穩健度測試。
     exit_eps_loss：最近四季 EPS 合計轉負（公司虧損）時，不論賺賠隔天開盤出場（需 attach_fundamentals）。
@@ -237,6 +240,23 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             raw = pd.read_csv(UNI / "prices" / f"{sid}.csv", parse_dates=["date"]).set_index("date")["open"]
             raw_cache[sid] = raw.reindex(dates).values
         return raw_cache[sid][n]
+
+    def size(sid, n, invest):
+        """依整張限制調整投入金額（占初始資金比例）。回傳 0 表示放棄。"""
+        if lot_mode is None or invest <= 0:
+            return max(invest, 0.0)
+        ro = raw_open(sid, n)
+        if not ro or np.isnan(ro):
+            return invest
+        lot_cost = 1000 * ro / capital
+        lots = int(invest // lot_cost)
+        if lots >= 1:
+            return lots * lot_cost
+        if lot_mode == "borrow" and contributions:
+            nxt = [k for k in contributions if k > n]
+            if nxt and cash + contributions[min(nxt)] >= lot_cost:
+                return lot_cost
+        return 0.0
 
     def offset(n, profit, exclude):
         nonlocal cash
@@ -365,7 +385,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             avg_now = pos["cost"] / pos["shares"]
             if (time_add_days and d["add"][p] and c_prev < avg_now
                     and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0)):
-                invest = min(cash, pos["budget"] * time_add_amount)
+                invest = size(sid, n, min(cash, pos["budget"] * time_add_amount))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -377,7 +397,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)
-                invest = min(cash, invest)
+                invest = size(sid, n, min(cash, invest))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -432,8 +452,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 if target_util is not None and util_mode == "invested":
                     if (value_prev - cash) + invest > target_util * value_prev + 1e-12:
                         break
+                invest = size(sid, n, invest)
                 if invest <= 0:
-                    break
+                    continue
                 o = data[sid]["open"][n]
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}

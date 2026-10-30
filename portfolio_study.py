@@ -174,7 +174,7 @@ def prepare(stock_ids, dates):
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
-        removal_exit=None, trap_days=None, slot_split=None):
+        removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -186,6 +186,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       虧損幅度最大的先平，有剩再平下一檔。
     offset_frac：只拿獲利的這個比例去補虧（例如 0.5 = 一半）。
     offset_only_stale：只處理「持有超過 1 年」或「虧損超過 30%」的部位。
+    offset_only_deep：只處理「目前虧損超過 30%」的部位（不看持有多久）。
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
@@ -226,6 +227,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 continue
             avg = pos["cost"] / pos["shares"]
             if offset_only_stale and not is_stale(sid, pos, n - 1, data[sid]["close_ff"][n - 1]):
+                continue
+            if offset_only_deep and not (o / avg - 1 < -0.30):
                 continue
             if offset_only_bad and not data[sid]["bad"][n - 1]:
                 continue

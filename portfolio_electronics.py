@@ -30,17 +30,13 @@ ELECTRONICS = {
 RECOMMENDED = {
     "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
     "②原版＋套牢不佔名額": {"stale_free_slot": True},
-    "③解讀二＋以盈補虧(僅變壞)": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested",
-                                 "first": 0.8, "offset_loss": True, "offset_only_bad": True},
 }
 SPLITS = {"不分區(最多5檔)": None, "0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
 EXITS = {
     "": {},
+    "·虧30%即補虧": {"offset_loss": True, "offset_only_deep": True},
     "·移出R1立刻賣": {"removal_exit": "immediate"},
-    "·移出R2回本賣": {"removal_exit": "breakeven"},
-    "·移出R3賺10%賣": {"removal_exit": "half_target"},
-    "·移出R4技術賣訊或回本": {"removal_exit": "tech"},
-    "·套牢滿1年以盈補虧": {"offset_loss": True, "offset_only_stale": True, "trap_days": 365},
+    "·移出R1立刻賣·虧30%即補虧": {"removal_exit": "immediate", "offset_loss": True, "offset_only_deep": True},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}
@@ -71,7 +67,8 @@ def main():
             tr[col] = tr[col] * CAPITAL
         closed = tr[tr["出場"].notna()]
         key = f"0050＋0056｜{vname}"
-        rows[key] = {"移出出場": int((tr["原因"] == "移出名單出場").sum()), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4, **ps.stats(eq), "筆數": len(tr), "已結案": len(closed),
+        rows[key] = {"補虧次數": int(tr["原因"].astype(str).str.startswith("以盈補虧").sum()),
+                     "移出出場": int((tr["原因"] == "移出名單出場").sum()), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4, **ps.stats(eq), "筆數": len(tr), "已結案": len(closed),
                      "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
                      "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
                      "資金使用率%": eq.attrs["資金使用率%"]}

@@ -177,7 +177,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
-        late_tech_days=None, offset_min_hold_days=None):
+        late_tech_days=None, offset_min_hold_days=None, need_candidate=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -197,6 +197,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    need_candidate：降低停利（target_schedule 中低於 TARGET 的門檻）與以盈補虧，只有在當天有其他
+      「可以買的好標的」（殖利率 ≥5% ＋ 技術買點、仍在成分股、尚未持有）時才執行，換股用。
     offset_min_hold_days：以盈補虧只處理持有超過這麼多天的虧損部位。
     late_tech_days：持有滿這麼多天後，有獲利且出現價量／引線賣訊也賣。
     contributions：{日期索引 n: 追加金額（以初始資金為 1 的比例）}，當天開盤前加入現金。
@@ -299,6 +301,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
         pending_offsets = []
+        has_cand = (not need_candidate) or any(
+            data[s_]["buy"][p] and mem.get(s_, no)[p] and s_ not in positions and not np.isnan(data[s_]["open"][n])
+            for s_ in data)
         for sid in list(positions):
             if sid not in positions:
                 continue
@@ -316,6 +321,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 target = [tg for d0, tg in target_schedule if held >= d0][-1]
             gain = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1 if target == 0 else \
                 c_prev / (pos["cost"] / pos["shares"]) - 1
+            if gain < TARGET and not has_cand:
+                gain = -1  # 降低停利需要有好標的可換
             if gain >= target:
                 close_out(sid, n, o, "停利" if target == TARGET else f"降低停利({target:.0%})")
                 sold_today.add(sid)
@@ -367,7 +374,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest
-        for profit in pending_offsets:
+        for profit in (pending_offsets if has_cand else []):
             before = set(positions)
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)

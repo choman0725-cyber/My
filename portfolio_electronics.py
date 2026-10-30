@@ -33,15 +33,14 @@ RECOMMENDED = {
 }
 SPLITS = {"0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
 _R5 = {"removal_exit": "tech_profit", "free_slot_removed": True}
+_A = {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "offset_loss": True, "offset_min_hold_days": 365,
+      "time_add_days": 182}
 EXITS = {
     "·原規則": _R5,
     "·H0滿2年強制賣": {**_R5, "max_hold_days": 730},
-    "·滿1年回本賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)]},
-    "·滿1年回本賣＋滿2年強制賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "max_hold_days": 730},
-    "·滿1年回本賣＋補虧": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)],
-                         "offset_loss": True, "offset_min_hold_days": 365},
-    "·滿1年回本賣＋補虧＋滿2年強制賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)],
-                                   "offset_loss": True, "offset_min_hold_days": 365, "max_hold_days": 730},
+    "·A回本賣＋補虧＋每半年加碼(不需好標的)": _A,
+    "·A回本賣＋補虧＋每半年加碼＋需好標的": {**_A, "need_candidate": True},
+    "·A＋需好標的＋滿2年強制賣": {**_A, "need_candidate": True, "max_hold_days": 730},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}

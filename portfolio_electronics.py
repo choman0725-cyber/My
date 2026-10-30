@@ -31,14 +31,11 @@ RECOMMENDED = {
     "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
     "②原版＋套牢不佔名額": {"stale_free_slot": True},
 }
-SPLITS = {"不分區(最多5檔)": None, "0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
+SPLITS = {"0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
 EXITS = {
-    "": {},
-    "·移出R1立刻賣": {"removal_exit": "immediate"},
-    "·移出R5有賺才看技術賣訊": {"removal_exit": "tech_profit"},
     "·R5＋移出不佔名額": {"removal_exit": "tech_profit", "free_slot_removed": True},
-    "·R5＋虧30%不佔名額": {"removal_exit": "tech_profit", "free_slot_deep": True},
-    "·R5＋移出與虧30%都不佔名額": {"removal_exit": "tech_profit", "free_slot_removed": True, "free_slot_deep": True},
+    "·R5＋移出不佔名額·套牢每年多加碼": {"removal_exit": "tech_profit", "free_slot_removed": True, "time_add_days": 365},
+    "·R5＋移出不佔名額·套牢每半年多加碼": {"removal_exit": "tech_profit", "free_slot_removed": True, "time_add_days": 182},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}
@@ -73,7 +70,10 @@ def main():
                      "移出出場": int((tr["原因"] == "移出名單出場").sum()), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4, **ps.stats(eq), "筆數": len(tr), "已結案": len(closed),
                      "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
                      "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
-                     "資金使用率%": eq.attrs["資金使用率%"]}
+                     "資金使用率%": eq.attrs["資金使用率%"],
+                     "持有>1年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 365).sum()),
+                     "持有>2年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 730).sum()),
+                     "最長持有(年)": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days.max()) / 365}
         details[key] = tr
         tr.to_csv(RESULTS / f"portfolio_electronics_{vname}.csv", index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):

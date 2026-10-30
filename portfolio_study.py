@@ -175,7 +175,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
-        free_slot_removed=False, free_slot_deep=False, contributions=None):
+        free_slot_removed=False, free_slot_deep=False, contributions=None,
+        time_add_days=None, time_add_amount=0.20):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -190,6 +191,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     offset_only_deep：只處理「目前虧損超過 30%」的部位（不看持有多久）。
     free_slot_removed：已被移出成分股、尚未賣出的部位不佔名額。
     free_slot_deep：目前虧損超過 30% 的部位不佔名額。
+    time_add_days：持有每滿這麼多天且仍虧損，就多一次加碼機會（出現爆量下影線／長紅、收盤低於平均成本時，
+      加碼單檔額度 × time_add_amount）；例如 365＝每年一次、182＝每半年一次。
     contributions：{日期索引 n: 追加金額（以初始資金為 1 的比例）}，當天開盤前加入現金。
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
@@ -320,6 +323,16 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             pos["removed"] |= not mem.get(sid, no)[p]
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
+            avg_now = pos["cost"] / pos["shares"]
+            if (time_add_days and d["add"][p] and c_prev < avg_now
+                    and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0)):
+                invest = min(cash, pos["budget"] * time_add_amount)
+                if invest > 0:
+                    pos["shares"] += invest * (1 - BUY_COST) / o
+                    pos["cost"] += invest
+                    pos["time_adds"] = (dates[p] - dates[pos["start"]]).days // time_add_days
+                    cash -= invest
+                    continue
             if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"]:
                 invest = pos["budget"] * ADDS[pos["adds"]]
                 if idle_cash and len(positions) >= MAX_SLOTS:

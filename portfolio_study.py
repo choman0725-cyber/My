@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from backtest import BUY_COST, RAW_PRICES, RESULTS, ROOT, SELL_COST
-from indicators import pv_triggers
+from indicators import bollinger, cross_down, kd, pv_triggers, sma
 from yield_entry_study import entries
 from yield_study import REPORT_DEADLINE
 
@@ -178,7 +178,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
-        start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None):
+        start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
+        defer_breakout=None, defer_reversal=None, defer_floor=0.05):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -198,6 +199,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    defer_breakout / defer_reversal：停利類賣出成立時，若股價處於「突破狀態」（data[sid][defer_breakout]）就先不賣，
+      等「反轉訊號」（data[sid][defer_reversal]）出現再賣；延後期間獲利回落到「門檻 − defer_floor」以下則保利賣出。
+      突破／反轉陣列由 attach_fundamentals 產生：breakout_B1/B2/B3、reversal_Ra/Rb/Rc。
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
@@ -357,11 +361,17 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         and not (hold_yield_cap is not None and gain >= hold_yield_cap))
                 if keep:
                     pos["tp_hit"] = True
+                elif defer_breakout and d[defer_breakout][p] and not d[defer_reversal][p]:
+                    pos["defer"] = True          # 突破中，等反轉再賣
                 else:
                     close_out(sid, n, o, ("停利" if target == TARGET else f"降低停利({target:.0%})")
-                              + ("·殖利率<門檻" if pos.get("tp_hit") else ""))
+                              + ("·殖利率<門檻" if pos.get("tp_hit") else "") + ("·突破後反轉" if pos.get("defer") else ""))
                     sold_today.add(sid)
                     continue
+            elif pos.get("defer") and gain >= 0 and (d[defer_reversal][p] or gain < target - defer_floor):
+                close_out(sid, n, o, "突破後反轉賣出" if d[defer_reversal][p] else "突破延後·保利回落")
+                sold_today.add(sid)
+                continue
             elif pos.get("tp_hit") and hold_yield_floor is not None and gain < target - hold_yield_floor:
                 close_out(sid, n, o, "保利回落賣出")
                 sold_today.add(sid)
@@ -523,6 +533,18 @@ def attach_fundamentals(data, dates):
             ttm = pd.Series(e["eps"].rolling(4).sum().values, index=e["published"]).groupby(level=0).last()
             loss = (ttm < 0).reindex(dates.union(ttm.index)).ffill().reindex(dates).fillna(False).astype(bool).values
         d["eps_loss"] = loss
+        c = px["close"]
+        ma10, ma20 = sma(c, 10), sma(c, 20)
+        _, _, upper = bollinger(px)
+        k, dd = kd(px)
+        rx = lambda ser: ser.reindex(dates).fillna(False).astype(bool).values
+        d["breakout_B1"] = rx(c >= c.rolling(20).max())
+        d["breakout_B2"] = rx(c > upper)
+        d["breakout_B3"] = rx((c > ma20) & (ma20 > ma20.shift(5)))
+        ts = (t["wick_sell"] | t["pv_sell"])
+        d["reversal_Ra"] = rx(ts | (c < ma10))
+        d["reversal_Rb"] = rx(c < ma20)
+        d["reversal_Rc"] = rx(ts | cross_down(k, dd))
         px = d["df"].dropna(subset=["open", "close"])
         t = pv_triggers(px)
         d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values

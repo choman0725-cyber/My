@@ -27,22 +27,14 @@ ELECTRONICS = {
     "2492", "3017", "3023", "3037", "3044", "3189", "3653", "3665", "4958", "8046", "2347", "3036", "3702",
     "2317", "2354", "2360", "2404",
 }
-BASES = {
-    "原版": {},
-    "解讀二·冷卻7日": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
+RECOMMENDED = {
+    "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
+    "②原版＋套牢不佔名額": {"stale_free_slot": True},
+    "③解讀二＋以盈補虧(僅變壞)": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested",
+                                 "first": 0.8, "offset_loss": True, "offset_only_bad": True},
 }
-HANDLING = {
-    "不佔名額": {"stale_free_slot": True},
-    "以盈補虧": {"offset_loss": True, "offset_only_stale": True},
-    "不佔名額＋以盈補虧": {"stale_free_slot": True, "offset_loss": True, "offset_only_stale": True},
-}
-STALE = {"舊定義(套1年或虧30%)": {}, "套牢(虧30%)滿1年": {"trap_days": 365}, "套牢(虧30%)滿2年": {"trap_days": 730}}
-VARIANTS = {}
-for b, bk in BASES.items():
-    VARIANTS[b] = bk
-    for st, stk in STALE.items():
-        for h, hk in HANDLING.items():
-            VARIANTS[f"{b}｜{st}·{h}"] = {**bk, **stk, **hk}
+SPLITS = {"不分區(最多5檔)": None, "0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
+VARIANTS = {f"{r}｜{sp}": (rk, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()}
 
 
 def main():
@@ -57,25 +49,25 @@ def main():
     raw_last = {sid: pd.read_csv(ps.UNI / "prices" / f"{sid}.csv")["close"].iloc[-1] for sid in ELECTRONICS
                 if (ps.UNI / "prices" / f"{sid}.csv").exists()}
     rows, details = {}, {}
-    for uname, etfs in {"0050＋0056": ("0050", "0056"), "只看0050": ("0050",), "只看0056": ("0056",)}.items():
-        member = ps.membership(cons[cons["etf"].isin(etfs) & cons["stock_id"].isin(ELECTRONICS)], dates)
-        sub = {k: v for k, v in data.items() if k in member}
-        for vname, kw in VARIANTS.items():
-            tr, eq = ps.run(sub, member, dates, capital=CAPITAL, **kw)
-            tr["名稱"] = tr["代號"].map(names)
-            for col in ("投入", "回收", "市值"):
-                tr[col] = tr[col] * CAPITAL
-            closed = tr[tr["出場"].notna()]
-            key = f"{uname}｜{vname}"
-            rows[key] = {"移出名單出場": int((tr["原因"] == "移出名單出場").sum()), "電子股池": len(sub), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4,
-                         **{k: v for k, v in ps.stats(eq).items()}, "筆數": len(tr), "已結案": len(closed),
-                         "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
-                         "以盈補虧次數": int(tr["原因"].astype(str).str.startswith("以盈補虧").sum()),
-                         "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
-                         "資金使用率%": eq.attrs["資金使用率%"]}
-            details[key] = tr
-            tr.to_csv(RESULTS / f"portfolio_electronics_{uname}_{vname.replace('·', '_')}.csv",
-                      index=False, encoding="utf-8-sig")
+    zone_members = {etf: {k: v.values for k, v in ps.membership(
+        cons[(cons["etf"] == etf) & cons["stock_id"].isin(ELECTRONICS)], dates).items()} for etf in ("0050", "0056")}
+    member = ps.membership(cons[cons["stock_id"].isin(ELECTRONICS)], dates)
+    sub = {k: v for k, v in data.items() if k in member}
+    for vname, (kw, split) in VARIANTS.items():
+        extra = {"slot_split": {"0050": (split[0], zone_members["0050"]), "0056": (split[1], zone_members["0056"])}} \
+            if split else {}
+        tr, eq = ps.run(sub, member, dates, capital=CAPITAL, **kw, **extra)
+        tr["名稱"] = tr["代號"].map(names)
+        for col in ("投入", "回收", "市值"):
+            tr[col] = tr[col] * CAPITAL
+        closed = tr[tr["出場"].notna()]
+        key = f"0050＋0056｜{vname}"
+        rows[key] = {"期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4, **ps.stats(eq), "筆數": len(tr), "已結案": len(closed),
+                     "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
+                     "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
+                     "資金使用率%": eq.attrs["資金使用率%"]}
+        details[key] = tr
+        tr.to_csv(RESULTS / f"portfolio_electronics_{vname}.csv", index=False, encoding="utf-8-sig")
     for etf in ("0050", "0056"):
         px = ps.load_prices(etf)[0]["close"].reindex(eq.index).ffill().dropna()
         rows[f"{etf} 買進持有"] = {"期末資產(萬)": px.iloc[-1] / px.iloc[0] * CAPITAL / 1e4, **ps.stats(px)}
@@ -85,8 +77,7 @@ def main():
     with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for key, tr in details.items():
-            if "｜" in key.split("｜", 1)[1]:
-                continue
+            pass
             hold = tr[tr["出場"].isna()].copy()
             hold["約股數"] = [int(m / raw_last[s]) for m, s in zip(hold["市值"], hold["代號"])]
             print(f"【{key}】目前持股")

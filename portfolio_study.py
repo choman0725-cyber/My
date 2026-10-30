@@ -174,7 +174,7 @@ def prepare(stock_ids, dates):
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
-        removal_exit=None, trap_days=None):
+        removal_exit=None, trap_days=None, slot_split=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -189,6 +189,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
+    slot_split：分區名額，例如 {"0050": (2, member_0050), "0056": (3, member_0056)}；
+      member_x 為 {代號: numpy 布林陣列}；每區只能放該 ETF 當天的成分股，兩區都可放時優先放排在後面的區（0056）。
+      設定時忽略 MAX_SLOTS 的總名額，one_per_day / cooldown 仍為全組合共用。
     trap_days：改用「套牢」定義判斷 stale（供 offset_only_stale 與 stale_free_slot 使用）——
       收盤低於平均成本 30% 以上視為套牢，連續套牢超過 trap_days 天才算；回到 -30% 以內就重新計算。
       未設定時沿用舊定義：持有超過 1 年或虧損超過 30%。
@@ -326,13 +329,31 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         else:
             counted = len(positions)
         free = MAX_SLOTS - counted
+        if slot_split:
+            used = {z: 0 for z in slot_split}
+            for s_, q in positions.items():
+                if not (stale_free_slot and is_stale(s_, q, p, data[s_]["close_ff"][p])):
+                    used[q["zone"]] += 1
+            zone_free = {z: cap - used[z] for z, (cap, _) in slot_split.items()}
+            free = sum(max(v, 0) for v in zone_free.values())
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0
         if free > 0:
             cands = [(data[s_]["yield"][p], s_) for s_ in data
                      if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p]
                      and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
-            for _, sid in sorted(cands, reverse=True)[:free]:
+            picked = 0
+            for _, sid in sorted(cands, reverse=True):
+                if picked >= free:
+                    break
+                zone = None
+                if slot_split:
+                    for z, (cap, zm) in reversed(list(slot_split.items())):
+                        if zone_free[z] > 0 and sid in zm and zm[sid][p]:
+                            zone = z
+                            break
+                    if zone is None:
+                        continue
                 budget = value_prev / MAX_SLOTS
                 invest = min(cash, budget * first)
                 if target_util is not None and util_mode == "committed":
@@ -347,9 +368,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     break
                 o = data[sid]["open"][n]
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
-                                  "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False}
+                                  "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 cash -= invest
                 last_buy_n = n
+                picked += 1
+                if zone:
+                    zone_free[zone] -= 1
         value = cash
         for sid, pos in positions.items():
             d = data[sid]

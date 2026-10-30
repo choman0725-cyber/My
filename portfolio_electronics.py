@@ -28,8 +28,11 @@ ELECTRONICS = {
 }
 VARIANTS = {
     "原版（最多5檔、首買總資產10%）": {},
+    "原版＋以盈補虧": {"offset_loss": True},
     "解讀二·冷卻7日（實際投入≈80%）": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
                                      "util_mode": "invested", "first": 0.8},
+    "解讀二·冷卻7日＋以盈補虧": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
+                               "util_mode": "invested", "first": 0.8, "offset_loss": True},
 }
 
 
@@ -40,6 +43,7 @@ def main():
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
     cache = RESULTS / "portfolio_prepared.pkl"
     data, _ = pickle.loads(cache.read_bytes()) if cache.exists() else ps.prepare(sorted(cons["stock_id"].unique()), dates)
+    print("（快取資料）" if cache.exists() else "")
 
     raw_last = {sid: pd.read_csv(ps.UNI / "prices" / f"{sid}.csv")["close"].iloc[-1] for sid in ELECTRONICS
                 if (ps.UNI / "prices" / f"{sid}.csv").exists()}
@@ -48,7 +52,7 @@ def main():
         member = ps.membership(cons[cons["etf"].isin(etfs) & cons["stock_id"].isin(ELECTRONICS)], dates)
         sub = {k: v for k, v in data.items() if k in member}
         for vname, kw in VARIANTS.items():
-            tr, eq = ps.run(sub, member, dates, **kw)
+            tr, eq = ps.run(sub, member, dates, capital=CAPITAL, **kw)
             tr["名稱"] = tr["代號"].map(names)
             for col in ("投入", "回收", "市值"):
                 tr[col] = tr[col] * CAPITAL
@@ -57,6 +61,8 @@ def main():
             rows[key] = {"電子股池": len(sub), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4,
                          **{k: v for k, v in ps.stats(eq).items()}, "筆數": len(tr), "已結案": len(closed),
                          "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
+                         "以盈補虧次數": int(tr["原因"].astype(str).str.startswith("以盈補虧").sum()),
+                         "持有中虧損(萬)": (tr.loc[tr["出場"].isna(), "市值"] - tr.loc[tr["出場"].isna(), "投入"]).clip(upper=0).sum() / 1e4,
                          "資金使用率%": eq.attrs["資金使用率%"]}
             details[key] = tr
             tr.to_csv(RESULTS / f"portfolio_electronics_{uname}_{vname.split('（')[0].replace('·', '_')}.csv",

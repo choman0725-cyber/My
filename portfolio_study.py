@@ -172,23 +172,76 @@ def prepare(stock_ids, dates):
 # ---------- 回測 ----------
 
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
-        util_mode="committed", first=FIRST):
+        util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
       invested ：已投入股票市值 + 新部位首買金額 <= 總資產 × target_util（剩下現金給加碼，先到先用）
     first：首買占單檔額度（總資產/5）的比例。
-    股票下市／合併後沒有價格：在最後交易日的隔天，以最後收盤價結算出場（原因記為「下市結算」）。"""
+    股票下市／合併後沒有價格：在最後交易日的隔天，以最後收盤價結算出場（原因記為「下市結算」）。
+    offset_loss（以盈補虧）：某檔停利賣出時，用這筆已實現獲利，同一天開盤平掉「已加碼過且仍虧損」
+      部位的整數張（1 張 = 1000 股，依 capital 與原始股價換算），平掉的虧損不超過這筆獲利；
+      虧損幅度最大的先平，有剩再平下一檔。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
+
+    raw_cache = {}
+
+    def raw_open(sid, n):
+        if sid not in raw_cache:
+            raw = pd.read_csv(UNI / "prices" / f"{sid}.csv", parse_dates=["date"]).set_index("date")["open"]
+            raw_cache[sid] = raw.reindex(dates).values
+        return raw_cache[sid][n]
+
+    def offset(n, profit, exclude):
+        nonlocal cash
+        losers = []
+        for sid, pos in positions.items():
+            o = data[sid]["open"][n]
+            if sid in exclude or pos["adds"] < 1 or np.isnan(o):
+                continue
+            avg = pos["cost"] / pos["shares"]
+            if o * (1 - SELL_COST) < avg:
+                losers.append((o / avg - 1, sid))
+        for _, sid in sorted(losers):
+            if profit <= 0:
+                break
+            pos, o = positions[sid], data[sid]["open"][n]
+            avg = pos["cost"] / pos["shares"]
+            loss_per_share = avg - o * (1 - SELL_COST)
+            ro = raw_open(sid, n)
+            real_per_norm = o * capital / ro if ro and not np.isnan(ro) else np.nan   # 每 1 單位模型股數 = 多少實際股
+            if np.isnan(real_per_norm):
+                continue
+            held_lots = int(pos["shares"] * real_per_norm // 1000)
+            lots = min(held_lots, int(profit / loss_per_share * real_per_norm // 1000))
+            if lots <= 0:
+                continue
+            sell = min(pos["shares"], lots * 1000 / real_per_norm)
+            if lots >= held_lots:
+                sell = pos["shares"]
+            proceeds = sell * o * (1 - SELL_COST)
+            cost = avg * sell
+            profit -= cost - proceeds
+            cash += proceeds
+            trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": f"以盈補虧({lots}張)",
+                           "加碼": pos["adds"], "投入": cost, "回收": proceeds, "被踢出": pos["removed"],
+                           "報酬%": 100 * (proceeds / cost - 1), "最深套牢%": 100 * (pos["low"] / pos["first"] - 1),
+                           "持有日": (dates[n] - dates[pos["start"]]).days})
+            pos["shares"] -= sell
+            pos["cost"] -= cost
+            if pos["shares"] <= 1e-12:
+                positions.pop(sid)
 
     def close_out(sid, n, price, reason):
         nonlocal cash
         pos = positions.pop(sid)
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
+        if offset_loss and reason == "停利":
+            pending_offsets.append(proceeds - pos["cost"])
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": reason, "加碼": pos["adds"],
                        "投入": pos["cost"], "回收": proceeds,
                        "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
@@ -198,7 +251,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         p = n - 1
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
+        pending_offsets = []
         for sid in list(positions):
+            if sid not in positions:
+                continue
             pos, d = positions[sid], data[sid]
             if p >= d["last_n"] and n > d["last_n"]:          # 已下市
                 close_out(sid, n, d["close_ff"][d["last_n"]], "下市結算")
@@ -225,6 +281,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest
+        for profit in pending_offsets:
+            before = set(positions)
+            offset(n, profit, sold_today)
+            sold_today |= before - set(positions)
         free = MAX_SLOTS - len(positions)
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0

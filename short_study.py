@@ -18,8 +18,11 @@
   二、出場變體：訊號回補／＋停損 10%／停損 10% 最多 60 日／停利 15% 停損 10% 最多 120 日／移動停損 8%。
   三、股票池：149 檔成分股（在成分股期間才放空）2017-01 起，彙總每筆報酬、勝率、賺賠比、年化貢獻，
       再按大盤位置（加權指數在年線上／下、是否空頭排列）拆開看放空什麼時候才有用。
+  四、先判多空盤：10 種加權指數空頭盤定義，先看定義本身（期間占比、期間內指數報酬、放空 0050），再看
+      「只在空頭盤內放空個股、轉多就回補或照訊號回補、多頭盤完全不做」。
 用法：python short_study.py            # 全部
       python short_study.py 2382 7     # 只跑單檔
+      python short_study.py regime     # 只跑多空盤
 輸出：results/short_*.csv、results/short_tech_study.log（run_all.sh 會接）
 """
 import sys
@@ -441,6 +444,119 @@ def universe(log=print, stop=0.10):
     return summ
 
 
+# ---------- 四：先判多空盤，利空盤才放空，其他時間不做 ----------
+
+def regime_defs(index):
+    """加權指數的多種「空頭盤」定義，對齊到個股交易日。回傳 {名稱: 布林 Series}。"""
+    tai = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"]).set_index("date")["close"]
+    ma5, ma20, ma60, ma120, ma240 = (sma(tai, n) for n in (5, 20, 60, 120, 240))
+    raw = {
+        "R1 指數<年線": tai < ma240,
+        "R2 指數<年線且年線下彎": (tai < ma240) & (ma240 < ma240.shift(20)),
+        "R3 指數<季線且季線下彎": (tai < ma60) & (ma60 < ma60.shift(10)),
+        "R4 空頭排列MA5<20<60": (ma5 < ma20) & (ma20 < ma60),
+        "R5 季線<年線（死亡交叉後）": ma60 < ma240,
+        "R6 指數<年線且空頭排列": (tai < ma240) & (ma5 < ma20) & (ma20 < ma60),
+        "R7 近60日跌幅>10%": tai / tai.shift(60) - 1 < -0.10,
+        "R8 自250日高點回落>15%": tai / tai.rolling(250).max() - 1 < -0.15,
+        "R9 月線<季線<年線且指數<月線": (ma20 < ma60) & (ma60 < ma240) & (tai < ma20),
+        "R10 指數<半年線且半年線下彎": (tai < ma120) & (ma120 < ma120.shift(20)),
+    }
+    return {k: v.reindex(index.union(v.index)).ffill().reindex(index).fillna(False).astype(bool) for k, v in raw.items()}, tai
+
+
+def regime_study(log=print, stop=0.10):
+    """每種空頭盤定義：(1) 盤勢本身對不對：期間占比、期間內指數年化、0050 在期間內放空的結果；
+    (2) 只在空頭盤放空個股、多頭盤完全不做：進場要在空頭盤內，回補＝訊號 或 停損 10% 或 盤勢轉多。"""
+    t0 = time.time()
+    cons = pd.read_csv(UNI / "constituents.csv", dtype=str)
+    stock_ids = sorted(set(cons["stock_id"]))
+    taiex = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"]).set_index("date")
+    all_dates = taiex.index[taiex.index >= pd.Timestamp("2015-01-01")]
+    member = membership(cons, all_dates)
+    res_all = pd.read_csv(UNI / "dividend_result_all.csv", dtype={"stock_id": str})
+    res_all["date"] = pd.to_datetime(res_all["date"])
+    regimes, tai = regime_defs(all_dates)
+    span = all_dates[all_dates >= UNIVERSE_START]
+    years = (span[-1] - span[0]).days / 365.25
+
+    # (1) 盤勢本身：期間占比、期間內指數報酬、放空 0050 的結果（盤勢成立隔天開盤空，轉多隔天開盤補）
+    etf, _ = load_prices("0050")
+    rows = {}
+    for name, r in regimes.items():
+        rs = r.reindex(span).fillna(False)
+        in_days = rs.sum()
+        # 指數在空頭盤期間的日報酬累計
+        ret = tai.reindex(span).pct_change().fillna(0)
+        idx_in = (1 + ret[rs.shift(1, fill_value=False)]).prod() - 1
+        idx_out = (1 + ret[~rs.shift(1, fill_value=False)]).prod() - 1
+        start_sig = rs & ~rs.shift(1, fill_value=False)
+        t, eq = run_short(etf, start_sig.reindex(etf.index).fillna(False), (~rs).reindex(etf.index).fillna(False),
+                          span[0], span[-1], uptick=False)
+        s = summarize(t, eq)
+        rows[name] = {"空頭盤占比%": 100 * in_days / len(span), "段數": int(start_sig.sum()),
+                      "空頭盤期間指數累計%": 100 * idx_in, "多頭盤期間指數累計%": 100 * idx_out,
+                      "放空0050筆數": s["交易次數"], "放空0050勝率%": s["勝率%"], "放空0050每筆%": s["每筆期望值%"],
+                      "放空0050總報酬%": s["總報酬%"], "放空0050年化%": s["年化%"], "放空0050最大回撤%": s["最大回撤%"]}
+    reg_tab = pd.DataFrame(rows).T.astype(float).round(1)
+    reg_tab.to_csv(RESULTS / "short_regime_index.csv", encoding="utf-8-sig")
+    log(f"\n【九、多空盤定義本身對不對（{span[0]:%Y-%m-%d}~{span[-1]:%Y-%m-%d}，{years:.1f} 年；加權指數同期累計 "
+        f"{100 * (tai.reindex(span).iloc[-1] / tai.reindex(span).iloc[0] - 1):.0f}%）】\n"
+        "空頭盤成立隔天開盤放空 0050、轉多隔天開盤回補，中間不看個股訊號：\n" + fmt(reg_tab))
+
+    # (2) 個股：只在空頭盤內放空
+    picks = {k: v for k, v in SHORT_STRATEGIES.items()}
+    rev = reversed_strategies()
+    for n in ("A2 價格站上/跌破 MA60", "C2 唐奇安 20/10", "D1 帶量長紅", "A1 均線交叉 MA20/60"):
+        picks[n] = rev[n]
+    trades = []
+    for sid in stock_ids:
+        loaded = load_prices(sid)
+        if loaded is None or len(loaded[0]) < 300 or sid not in member:
+            continue
+        df, _ = loaded
+        df = df[df.index >= pd.Timestamp("2015-01-01")]
+        if df.index[-1] < UNIVERSE_START + pd.Timedelta(days=200):
+            continue
+        mem = member[sid].reindex(df.index).ffill().fillna(False).astype(bool)
+        ex_dates = res_all.loc[(res_all["stock_id"] == sid) & res_all["stock_or_cache_dividend"].astype(str).str.contains("息|權"), "date"]
+        force, block = ex_dividend_blocks(df.index, ex_dates.tolist())
+        start, end = max(UNIVERSE_START, df.index[0] + pd.Timedelta(days=200)), df.index[-1]
+        sigs = {}
+        for name, fn in picks.items():
+            a, b = fn(df)
+            sigs[name] = (a, b) if name in SHORT_STRATEGIES else (b, a)
+        for rname, r in regimes.items():
+            rr = r.reindex(df.index).ffill().fillna(False).astype(bool)
+            for name, (short, cover) in sigs.items():
+                for mode in ("轉多就補", "訊號補"):
+                    cv = cover | ~rr if mode == "轉多就補" else cover
+                    t, _ = run_short(df, short & mem & rr, cv, start, end, stop=stop, force=force, block=block)
+                    if len(t):
+                        trades.append(t.assign(stock_id=sid, strategy=name, regime=rname, mode=mode))
+    T = pd.concat(trades, ignore_index=True)
+    T.to_csv(RESULTS / "short_regime_trades.csv", index=False, encoding="utf-8-sig")
+
+    def agg(g):
+        r = g["return"]
+        wins, losses = r[r > 0], r[r <= 0]
+        return pd.Series({"筆數": len(r), "勝率%": 100 * (r > 0).mean(), "每筆期望值%": 100 * r.mean(),
+                          "獲利因子": wins.sum() / -losses.sum() if len(losses) and losses.sum() < 0 else np.nan,
+                          "平均天數": g["days"].mean(), "每檔每年貢獻%": 100 * r.sum() / g["stock_id"].nunique() / years})
+
+    summ = T.groupby(["regime", "mode", "strategy"], sort=False).apply(agg, include_groups=False)
+    summ.index.names = ["空頭盤定義", "回補方式", "策略"]
+    summ.to_csv(RESULTS / "short_regime_summary.csv", encoding="utf-8-sig")
+    by_reg = T.groupby(["regime", "mode"], sort=False).apply(agg, include_groups=False).round(2)
+    by_reg.index.names = ["空頭盤定義", "回補方式"]
+    log(f"\n【十、只在空頭盤放空個股（停損 10%；{len(T):,} 筆，耗時 {time.time() - t0:.0f} 秒）：各定義合計（14 個策略）】\n" + fmt(by_reg))
+    pivot = summ["每筆期望值%"].unstack("策略").round(2)
+    log("\n各定義 × 策略 每筆期望值%：\n" + fmt(pivot.T))
+    pos = summ[summ["每筆期望值%"] > 0].sort_values("每筆期望值%", ascending=False).round(2)
+    log(f"\n正期望值的組合：{len(pos)} / {len(summ)}（筆數 >= 100 的：{int((pos['筆數'] >= 100).sum())}）\n" + fmt(pos[pos["筆數"] >= 30].head(25)))
+    return reg_tab, summ
+
+
 def main(argv):
     RESULTS.mkdir(exist_ok=True)
     lines = []
@@ -449,11 +565,16 @@ def main(argv):
         print(s)
         lines.append(str(s))
 
+    if len(argv) > 1 and argv[1] == "regime":
+        regime_study(log)
+        (RESULTS / "short_regime_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return
     if len(argv) > 1:
         single_stock(argv[1], int(argv[2]) if len(argv) > 2 else 7, log)
     else:
         single_stock("2382", 7, log)
         universe(log)
+        regime_study(log)
     (RESULTS / "short_tech_study.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

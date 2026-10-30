@@ -198,7 +198,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       未設定時沿用舊定義：持有超過 1 年或虧損超過 30%。
     removal_exit：被移出成分股後的伺機出場方式（不等 +20%）：
       immediate＝隔天開盤就賣；breakeven＝扣成本後不虧就賣；half_target＝獲利 10% 就賣；
-      tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣。
+      tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣；
+      tech_profit＝有獲利（扣成本後不虧）且出現價量／引線賣訊才賣，虧損時續抱（仍可等 +20% 停利）。
     使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
@@ -301,7 +302,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 even = c_prev * (1 - SELL_COST) >= avg
                 if (removal_exit == "immediate" or (removal_exit == "breakeven" and even)
                         or (removal_exit == "half_target" and c_prev / avg - 1 >= TARGET / 2)
-                        or (removal_exit == "tech" and (even or d["tech_sell"][p]))):
+                        or (removal_exit == "tech" and (even or d["tech_sell"][p]))
+                        or (removal_exit == "tech_profit" and even and d["tech_sell"][p])):
                     close_out(sid, n, o, "移出名單出場")
                     sold_today.add(sid)
                     continue

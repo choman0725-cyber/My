@@ -20,7 +20,10 @@ VERSIONS = {
     "V3 A＋需好標的｜3+2區": ({**_BASE, "target_schedule": [(0, 0.20), (365, 0.0)], "offset_loss": True,
                             "offset_min_hold_days": 365, "time_add_days": 182, "need_candidate": True}, (3, 2)),
 }
-ADDS = {"不追加": 0, "每年追加50萬": 500_000, "每年追加100萬": 1_000_000}
+ADDS = {"不追加": 0, "每年追加50萬": 500_000, "每年追加100萬": 1_000_000,
+        "前3年50萬·中3年80萬·後3年100萬": {**{y: 500_000 for y in (2018, 2019, 2020)},
+                                       **{y: 800_000 for y in (2021, 2022, 2023)},
+                                       **{y: 1_000_000 for y in (2024, 2025, 2026)}}}
 # 只看單一 ETF 時不分區，最多 5 檔
 SINGLE_VERSIONS = {
     "①解讀二·R5＋移出不佔名額": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested",
@@ -61,9 +64,10 @@ def main():
       member = ps.membership(cons[cons["etf"].isin(etfs) & cons["stock_id"].isin(ELECTRONICS)], dates)
       sub = {k: v for k, v in data.items() if k in member}
       for aname, amt in ADDS.items():
-          contrib = {n: amt / CAPITAL for n in first_day.values()} if amt else None
-          flow_dates = [dates[1]] + ([dates[n] for n in first_day.values()] if amt else [])
-          flows = [CAPITAL] + ([amt] * len(first_day) if amt else [])
+          per_year = amt if isinstance(amt, dict) else {y: amt for y in first_day} if amt else {}
+          contrib = {first_day[y]: a / CAPITAL for y, a in per_year.items()} or None
+          flow_dates = [dates[1]] + [dates[first_day[y]] for y in per_year]
+          flows = [CAPITAL] + list(per_year.values())
           invested = sum(flows)
           for vname, (kw, split) in versions.items():
               extra = {"slot_split": {"0050": (split[0], zone["0050"]), "0056": (split[1], zone["0056"])}} if split else {}
@@ -100,7 +104,7 @@ def main():
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for k, h in holdings.items():
-            if k[1] == "每年追加100萬" and not k[2].endswith("買進持有"):
+            if k[1].startswith("前3年") and not k[2].endswith("買進持有"):
                 print(f"【{k[0]}｜{k[1]}｜{k[2]} 目前持股】")
                 print(h[["名稱", "進場", "加碼", "投入", "市值", "報酬%"]].round(0).to_string(index=False), "\n")
 

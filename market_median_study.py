@@ -44,14 +44,12 @@ def apply2(cfg):
         d["buy"] = sig[sid] & ~np.isnan(thr_buy) & (y >= thr_buy)
         d["hy_rel"] = hy
     po._applied["buy"] = None
-po.apply = apply2
 _orig_to_kw = po.to_kw
 def to_kw2(cfg):
     kw = _orig_to_kw({k: v for k, v in cfg.items() if k != "mkt"})
     if cfg.get("mkt"):
         kw["hold_yield"] = "hy_rel"
     return kw
-po.to_kw = to_kw2
 
 def main():
     po.setup(); G = rs.G; dates = G["dates"]

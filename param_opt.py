@@ -40,7 +40,7 @@ DEFERS = {"不延後": {}, "B3×Rb": {"defer_breakout": "breakout_B3", "defer_re
 BASE_A = dict(min_yield=5.0, entry="任一", target=0.20, hold_yield=5.0, cap=None, floor=None, first=0.50,
               adds="A -15/-30 加30/20", time_add_days=182, time_add_amount=0.20, max_slots=5, split="不分區",
               stale=True, stale_days=365, stale_loss=-0.30, eps_exit=True, removal=True, defer="不延後",
-              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost")
+              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None)
 BASE_B = {**BASE_A, "cap": 0.40, "split": "0050區2＋0056區3"}
 BASES = {"底A 第1名Y1不分區": BASE_A, "底B 第2名Y3封頂2+3": BASE_B}
 
@@ -94,6 +94,8 @@ def to_kw(cfg):
         if cfg["floor"] is not None:
             kw["hold_yield_floor"] = cfg["floor"]
     kw.update(DEFERS[cfg["defer"]])
+    if cfg.get("mkt") and cfg["mkt"][2] is not None:
+        kw["hold_yield"] = "hy_rel"       # 續抱門檻改用市場中位數−k×σ 陣列
     if cfg.get("trap_days") is not None:
         kw["trap_days"] = cfg["trap_days"]
     if cfg.get("time_add_trap"):
@@ -110,6 +112,34 @@ def to_kw(cfg):
 
 
 _applied = {}
+_mk = {}
+
+
+def market_stats(universe="all"):
+    """每日「當天成分股預估殖利率」的橫斷面中位數／標準差／檔數。
+    universe："all"＝0050＋0056 全部成分股（含非電子，149 檔）、"elec"＝電子股池。只用當天資料，無前視。"""
+    key = (universe, len(G["dates"]))
+    if key not in _mk:
+        dates = G["dates"]
+        if universe == "all":
+            data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
+            cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
+            mem = ps.membership(cons, dates)
+            Y = pd.DataFrame({s: np.where(mem[s].values, data[s]["yield"][:len(dates)], np.nan) for s in data if s in mem}, index=dates)
+        else:
+            Y = pd.DataFrame({s: np.where(G["member"][s].values, d["yield"], np.nan) for s, d in G["sub"].items()}, index=dates)
+        _mk[key] = (Y.median(axis=1).values, Y.std(axis=1).values, Y.notna().sum(axis=1).values)
+    return _mk[key]
+
+
+def buy_threshold(cfg):
+    """回傳每日買進殖利率門檻陣列：固定 min_yield，或 mkt=(universe, k, hold_k, floor) 時為 max(中位數＋k×σ, floor)。"""
+    if not cfg.get("mkt"):
+        return np.full(len(G["dates"]), float(cfg["min_yield"]))
+    universe, k, _, floor = cfg["mkt"]
+    med, sd, _ = market_stats(universe)
+    thr = med + k * sd
+    return np.fmax(thr, floor) if floor else thr
 
 
 def apply(cfg):
@@ -117,12 +147,18 @@ def apply(cfg):
     ps.MAX_SLOTS, ps.TARGET = cfg["max_slots"], cfg["target"]
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
-    k = (cfg["min_yield"], cfg["entry"])
+    k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
+        thr = buy_threshold(cfg)
+        hy = None
+        if cfg.get("mkt") and cfg["mkt"][2] is not None:
+            universe, _, hold_k, _ = cfg["mkt"]; med, sd, _ = market_stats(universe); hy = med - hold_k * sd
         for sid, d in G["sub"].items():
             y = d["yield"]
-            d["buy"] = sig[sid] & (np.nan_to_num(y, nan=-1) >= cfg["min_yield"])
+            d["buy"] = sig[sid] & ~np.isnan(thr) & (np.nan_to_num(y, nan=-1) >= thr)
+            if hy is not None:
+                d["hy_rel"] = hy
         _applied["buy"] = k
 
 

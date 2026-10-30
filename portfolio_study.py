@@ -182,7 +182,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
-        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost"):
+        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
+        time_add_base="budget", deep_add_base="budget"):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -213,6 +214,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
     time_add_trap：定期加碼改成「套牢後才啟動」——收盤低於平均成本 30% 以上才開始計時（回到 -30% 以內就歸零重算），
       連續套牢每滿 time_add_days 天、出現加碼訊號且收盤低於平均成本，才多一次加碼（額度 × time_add_amount）。
+    time_add_base / deep_add_base：加碼金額的計算基準。"budget"＝進場時的額度（總資產÷5，固定不變，預設）；
+      "assets"＝加碼當天的總資產÷5；"position"＝加碼當天該部位的市值。再乘上 time_add_amount 或 ADDS 的比例。
     trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
       mode "all"＝全部出清重來，"profit"＝只賣有賺的，"target"＝只賣獲利已達停利門檻的（不管殖利率）。
@@ -525,8 +528,14 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             else:
                 due = (time_add_days and d["add"][p] and c_prev < avg_now
                        and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0))
+            def add_base(kind):
+                if kind == "assets":
+                    return value_prev / MAX_SLOTS
+                if kind == "position":
+                    return pos["shares"] * c_prev
+                return pos["budget"]
             if due:
-                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["budget"] * time_add_amount))
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), add_base(time_add_base) * time_add_amount))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -539,7 +548,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"定期加碼第{pos['time_adds']}次（持有滿{time_add_days}天仍虧損）")
                     continue
             if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"]:
-                invest = pos["budget"] * ADDS[pos["adds"]]
+                invest = add_base(deep_add_base) * ADDS[pos["adds"]]
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)

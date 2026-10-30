@@ -34,12 +34,14 @@ RECOMMENDED = {
 SPLITS = {"0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
 _R5 = {"removal_exit": "tech_profit", "free_slot_removed": True}
 EXITS = {
-    "·R5＋移出不佔名額": _R5,
+    "·原規則": _R5,
     "·H0滿2年強制賣": {**_R5, "max_hold_days": 730},
-    "·H1逐步降停利＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.10), (548, 0.0)], "max_hold_days": 730},
-    "·H2滿1年回本賣＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "max_hold_days": 730},
-    "·H3逐步降停利＋技術賣訊＋滿2年賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.10), (548, 0.0)],
-                                     "late_tech_days": 548, "max_hold_days": 730},
+    "·滿1年回本賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)]},
+    "·滿1年回本賣＋滿2年強制賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "max_hold_days": 730},
+    "·滿1年回本賣＋補虧": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)],
+                         "offset_loss": True, "offset_min_hold_days": 365},
+    "·滿1年回本賣＋補虧＋滿2年強制賣": {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)],
+                                   "offset_loss": True, "offset_min_hold_days": 365, "max_hold_days": 730},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}

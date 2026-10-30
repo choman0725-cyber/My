@@ -177,7 +177,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
-        late_tech_days=None):
+        late_tech_days=None, offset_min_hold_days=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -197,6 +197,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    offset_min_hold_days：以盈補虧只處理持有超過這麼多天的虧損部位。
     late_tech_days：持有滿這麼多天後，有獲利且出現價量／引線賣訊也賣。
     contributions：{日期索引 n: 追加金額（以初始資金為 1 的比例）}，當天開盤前加入現金。
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
@@ -240,6 +241,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 continue
             avg = pos["cost"] / pos["shares"]
             if offset_only_stale and not is_stale(sid, pos, n - 1, data[sid]["close_ff"][n - 1]):
+                continue
+            if offset_min_hold_days and (dates[n] - dates[pos["start"]]).days <= offset_min_hold_days:
                 continue
             if offset_only_deep and not (o / avg - 1 < -0.30):
                 continue

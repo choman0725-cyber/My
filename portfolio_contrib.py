@@ -12,14 +12,13 @@ import portfolio_study as ps
 from backtest import BUY_COST, RESULTS, ROOT
 from portfolio_electronics import CAPITAL, ELECTRONICS
 
+_BASE = {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8,
+         "removal_exit": "tech_profit", "free_slot_removed": True}
 VERSIONS = {
-    "①解讀二｜0050區2檔＋0056區3檔·R5＋移出不佔名額": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                                                   "util_mode": "invested", "first": 0.8,
-                                                   "removal_exit": "tech_profit", "free_slot_removed": True}, (2, 3)),
-    "①解讀二｜0050區3檔＋0056區2檔·R5": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                                      "util_mode": "invested", "first": 0.8, "removal_exit": "tech_profit"}, (3, 2)),
-    "①解讀二｜0050區2檔＋0056區3檔·R1": ({"one_per_day": True, "cooldown": 7, "target_util": 0.8,
-                                      "util_mode": "invested", "first": 0.8, "removal_exit": "immediate"}, (2, 3)),
+    "V1報酬優先｜2+3區·EPS轉負出場": ({**_BASE, "exit_eps_loss": True}, (2, 3)),
+    "V2最多抱2年｜3+2區·滿2年強制賣": ({**_BASE, "max_hold_days": 730}, (3, 2)),
+    "V3 A＋需好標的｜3+2區": ({**_BASE, "target_schedule": [(0, 0.20), (365, 0.0)], "offset_loss": True,
+                            "offset_min_hold_days": 365, "time_add_days": 182, "need_candidate": True}, (3, 2)),
 }
 ADDS = {"不追加": 0, "每年追加50萬": 500_000, "每年追加100萬": 1_000_000}
 # 只看單一 ETF 時不分區，最多 5 檔
@@ -31,8 +30,7 @@ SINGLE_VERSIONS = {
     "②原版＋套牢不佔名額·R5＋移出不佔名額": ({"stale_free_slot": True, "removal_exit": "tech_profit",
                                          "free_slot_removed": True}, None),
 }
-UNIVERSES = {"0050＋0056": (("0050", "0056"), VERSIONS), "只看0050": (("0050",), SINGLE_VERSIONS),
-             "只看0056": (("0056",), SINGLE_VERSIONS)}
+UNIVERSES = {"0050＋0056": (("0050", "0056"), VERSIONS)}
 
 
 def irr(flows, dates_, final_value, end):
@@ -81,7 +79,10 @@ def main():
               rows[(uname, aname, vname)] = {"總投入(萬)": invested / 1e4, "期末資產(萬)": final / 1e4,
                                       "獲利(萬)": (final - invested) / 1e4, "IRR%": irr(flows, flow_dates, final, dates[-1]),
                                       "最大回撤%": 100 * (nav / nav.cummax() - 1).min(),
-                                      "資金使用率%": eq.attrs["資金使用率%"]}
+                                      "資金使用率%": eq.attrs["資金使用率%"],
+                                      "勝率%": 100 * (tr.loc[tr["出場"].notna(), "報酬%"] > 0).mean(),
+                                      "最長持有(年)": ((tr["出場"].fillna(dates[-1]) - tr["進場"]).dt.days.max()) / 365,
+                                      "持有>2年": int(((tr["出場"].fillna(dates[-1]) - tr["進場"]).dt.days > 730).sum())}
               tr["名稱"] = tr["代號"].map(names)
               holdings[(uname, aname, vname)] = tr[tr["出場"].isna()].assign(投入=lambda x: x["投入"] * CAPITAL,
                                                                       市值=lambda x: x["市值"] * CAPITAL)
@@ -95,11 +96,11 @@ def main():
                                                    "最大回撤%": 100 * (pxn / pxn.cummax() - 1).min()}
     table = pd.DataFrame(rows).T
     table.index.names = ["選股範圍", "追加", "版本"]
-    table.round(2).to_csv(RESULTS / "portfolio_contrib_summary.csv", encoding="utf-8-sig")
+    table.round(2).to_csv(RESULTS / "portfolio_contrib_final3.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 250, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for k, h in holdings.items():
-            if k[0] != "0050＋0056" and k[2].startswith("①解讀二·R5"):
+            if k[1] == "每年追加100萬" and not k[2].endswith("買進持有"):
                 print(f"【{k[0]}｜{k[1]}｜{k[2]} 目前持股】")
                 print(h[["名稱", "進場", "加碼", "投入", "市值", "報酬%"]].round(0).to_string(index=False), "\n")
 

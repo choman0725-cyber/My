@@ -35,8 +35,10 @@ SPLITS = {"不分區(最多5檔)": None, "0050區2檔＋0056區3檔": (2, 3), "0
 EXITS = {
     "": {},
     "·移出R1立刻賣": {"removal_exit": "immediate"},
-    "·移出R4技術賣訊或回本": {"removal_exit": "tech"},
     "·移出R5有賺才看技術賣訊": {"removal_exit": "tech_profit"},
+    "·R5＋移出不佔名額": {"removal_exit": "tech_profit", "free_slot_removed": True},
+    "·R5＋虧30%不佔名額": {"removal_exit": "tech_profit", "free_slot_deep": True},
+    "·R5＋移出與虧30%都不佔名額": {"removal_exit": "tech_profit", "free_slot_removed": True, "free_slot_deep": True},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}

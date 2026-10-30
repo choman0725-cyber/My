@@ -174,7 +174,8 @@ def prepare(stock_ids, dates):
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
         offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
-        removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False):
+        removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
+        free_slot_removed=False, free_slot_deep=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -187,6 +188,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     offset_frac：只拿獲利的這個比例去補虧（例如 0.5 = 一半）。
     offset_only_stale：只處理「持有超過 1 年」或「虧損超過 30%」的部位。
     offset_only_deep：只處理「目前虧損超過 30%」的部位（不看持有多久）。
+    free_slot_removed：已被移出成分股、尚未賣出的部位不佔名額。
+    free_slot_deep：目前虧損超過 30% 的部位不佔名額。
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
@@ -329,15 +332,20 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             before = set(positions)
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)
-        if stale_free_slot:
-            counted = sum(1 for s_, q in positions.items() if not is_stale(s_, q, p, data[s_]["close_ff"][p]))
-        else:
-            counted = len(positions)
+        def occupies(s_, q):
+            if stale_free_slot and is_stale(s_, q, p, data[s_]["close_ff"][p]):
+                return False
+            if free_slot_removed and not mem.get(s_, no)[p]:
+                return False
+            if free_slot_deep and data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 < -0.30:
+                return False
+            return True
+        counted = sum(1 for s_, q in positions.items() if occupies(s_, q))
         free = MAX_SLOTS - counted
         if slot_split:
             used = {z: 0 for z in slot_split}
             for s_, q in positions.items():
-                if not (stale_free_slot and is_stale(s_, q, p, data[s_]["close_ff"][p])):
+                if occupies(s_, q):
                     used[q["zone"]] += 1
             zone_free = {z: cap - used[z] for z, (cap, _) in slot_split.items()}
             free = sum(max(v, 0) for v in zone_free.values())

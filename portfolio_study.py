@@ -190,6 +190,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": reason, "加碼": pos["adds"],
+                       "投入": pos["cost"], "回收": proceeds,
                        "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
                        "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[n] - dates[pos["start"]]).days})
 
@@ -260,9 +261,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     for sid, pos in positions.items():
         last = data[sid]["close_ff"][-1]
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": None, "原因": "持有中", "加碼": pos["adds"],
+                       "投入": pos["cost"], "市值": pos["shares"] * last,
                        "被踢出": pos["removed"], "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
                        "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - dates[pos["start"]]).days})
-    cols = ["代號", "進場", "出場", "原因", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日"]
+    cols = ["代號", "進場", "出場", "原因", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日", "投入", "回收", "市值"]
     eq = pd.Series(equity, index=dates[1:])
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
     return pd.DataFrame(trades, columns=cols), eq

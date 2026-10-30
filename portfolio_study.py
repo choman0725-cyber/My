@@ -268,11 +268,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 return lot_cost
         return 0.0
 
-    def addable_cash(n, p, value_prev):
+    def addable_cash(n, p, value_prev, occupies):
         if add_reserve is None:
             return cash
         unit = value_prev / MAX_SLOTS * first
-        free = max(MAX_SLOTS - len(positions), 0)
+        free = max(MAX_SLOTS - sum(1 for s_, q in positions.items() if occupies(s_, q)), 0)
         if add_reserve == "one":
             k = 1 if free > 0 else 0
         else:
@@ -348,6 +348,14 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
         pending_offsets = []
+        def occupies(s_, q):
+            if stale_free_slot and is_stale(s_, q, p, data[s_]["close_ff"][p]):
+                return False
+            if free_slot_removed and not mem.get(s_, no)[p]:
+                return False
+            if free_slot_deep and data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 < -0.30:
+                return False
+            return True
         has_cand = (not need_candidate) or any(
             data[s_]["buy"][p] and mem.get(s_, no)[p] and s_ not in positions and not np.isnan(data[s_]["open"][n])
             for s_ in data)
@@ -424,7 +432,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             avg_now = pos["cost"] / pos["shares"]
             if (time_add_days and d["add"][p] and c_prev < avg_now
                     and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0)):
-                invest = size(sid, n, min(addable_cash(n, p, value_prev), pos["budget"] * time_add_amount))
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["budget"] * time_add_amount))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -436,7 +444,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)
-                invest = size(sid, n, min(addable_cash(n, p, value_prev), invest))
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), invest))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -446,14 +454,6 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             before = set(positions)
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)
-        def occupies(s_, q):
-            if stale_free_slot and is_stale(s_, q, p, data[s_]["close_ff"][p]):
-                return False
-            if free_slot_removed and not mem.get(s_, no)[p]:
-                return False
-            if free_slot_deep and data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 < -0.30:
-                return False
-            return True
         counted = sum(1 for s_, q in positions.items() if occupies(s_, q))
         free = MAX_SLOTS - counted
         if slot_split:

@@ -158,19 +158,25 @@ def margin_factor(dates, m, recent_q=None, clip=None):
     return out
 
 
-def forward_dividend(dates, eps, div, payout_years=3, factor=None):
-    """預估年度現金股利。factor：每日利潤率調整係數（margin_factor），None 或 NaN 視同 1（純 EPS 法）。"""
+def forward_dividend(dates, eps, div, payout_years=3, factor=None, eps_base="ttm", payout="mean"):
+    """預估年度現金股利 = 預估 EPS × 配息率。
+    factor：每日利潤率調整係數（margin_factor），None 或 NaN 視同 1；只乘在「近四季 EPS」上。
+    eps_base："ttm"＝近四季 EPS；"fy"＝年配股的待發股利所屬年度（最後一個已除息年度＋1）四季都已公布、
+              股利尚未公告時，直接用該整年 EPS（不乘係數），其他時候同 "ttm"。
+    payout："mean"＝近 payout_years 個已知年度平均；"last"＝最近一個已知年度；"weighted"＝近 3 年加權 5/3/2（新到舊）。"""
     out = pd.Series(np.nan, index=dates)
     if eps.empty or div.empty:
         return out
     fac = np.ones(len(dates)) if factor is None else np.nan_to_num(np.asarray(factor, dtype=float), nan=1.0)
+    w = {"mean": None, "last": np.array([1.0]), "weighted": np.array([0.2, 0.3, 0.5])}[payout]
     annual_eps = eps.groupby("fy")["eps"].agg(["sum", "size"])
     annual_eps = annual_eps[annual_eps["size"] == 4]["sum"]
     by_fy = div.groupby("fy").agg(cash=("cash", "sum"), last_ann=("announced", "max"), n=("cash", "size"))
     by_fy["payout"] = by_fy["cash"] / annual_eps.reindex(by_fy.index)
     by_fy["known_from"] = [max(a, pd.Timestamp(fy + 1, 4, 1)) for fy, a in zip(by_fy.index, by_fy["last_ann"])]
     annual_payer = (by_fy["n"] == 1).all()
-    eps_pub, eps_val = eps["published"].values, eps["eps"].values
+    eps_pub, eps_val, eps_fy = eps["published"].values, eps["eps"].values, eps["fy"].values
+    ex_dates, ex_fy = div["ex_date"].values, div["fy"].values
     for i, t in enumerate(dates):
         if annual_payer:
             pending = div[(div["announced"] <= t) & (div["ex_date"] > t)]
@@ -180,10 +186,22 @@ def forward_dividend(dates, eps, div, payout_years=3, factor=None):
         k = np.searchsorted(eps_pub, np.datetime64(t), side="right")
         if k < 4:
             continue
-        ttm = eps_val[k - 4:k].sum()
-        known = by_fy[(by_fy["known_from"] <= t) & by_fy["payout"].notna()]["payout"].iloc[-payout_years:]
-        if len(known):
-            out[t] = max(ttm, 0) * fac[i] * known.clip(0, 2).mean()
+        base = max(eps_val[k - 4:k].sum(), 0) * fac[i]
+        if eps_base == "fy" and annual_payer:
+            done = ex_fy[ex_dates <= np.datetime64(t)]
+            if len(done):
+                fy = done.max() + 1
+                if (eps_fy[:k] == fy).sum() == 4:
+                    base = max(eps_val[:k][eps_fy[:k] == fy].sum(), 0)
+        known = by_fy[(by_fy["known_from"] <= t) & by_fy["payout"].notna()]["payout"].clip(0, 2)
+        if known.empty:
+            continue
+        if w is None:
+            p = known.iloc[-payout_years:].mean()
+        else:
+            v = known.iloc[-len(w):].values; ww = w[-len(v):]
+            p = (v * ww).sum() / ww.sum()
+        out[t] = base * p
     return out
 
 

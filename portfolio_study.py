@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from backtest import BUY_COST, RAW_PRICES, RESULTS, ROOT, SELL_COST
-from indicators import bollinger, cross_down, kd, pv_triggers, sma
+from indicators import bollinger, cross_down, kd, pv_triggers, rsi, sma
 from yield_entry_study import entries
 from yield_study import REPORT_DEADLINE
 
@@ -179,7 +179,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
-        defer_breakout=None, defer_reversal=None, defer_floor=0.05):
+        defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -199,6 +199,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    add_reserve：加碼讓位給新買點。None＝有現金就加；"one"＝加碼後現金仍須 ≥ 一筆首買金額；
+      "near1"/"near2"＝先保留「快到買點」股票（data[sid]["near_near1/near2"]，仍在成分股、未持有，上限＝空位數）
+      的首買金額，剩餘現金才可加碼；沒有快到買點的股票就不保留。
     defer_breakout / defer_reversal：停利類賣出成立時，若股價處於「突破狀態」（data[sid][defer_breakout]）就先不賣，
       等「反轉訊號」（data[sid][defer_reversal]）出現再賣；延後期間獲利回落到「門檻 − defer_floor」以下則保利賣出。
       突破／反轉陣列由 attach_fundamentals 產生：breakout_B1/B2/B3、reversal_Ra/Rb/Rc。
@@ -264,6 +267,18 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if nxt and cash + contributions[min(nxt)] >= lot_cost:
                 return lot_cost
         return 0.0
+
+    def addable_cash(n, p, value_prev):
+        if add_reserve is None:
+            return cash
+        unit = value_prev / MAX_SLOTS * first
+        free = max(MAX_SLOTS - len(positions), 0)
+        if add_reserve == "one":
+            k = 1 if free > 0 else 0
+        else:
+            key = "near_" + add_reserve
+            k = min(free, sum(1 for s_ in data if s_ not in positions and data[s_][key][p] and mem.get(s_, no)[p]))
+        return cash - k * unit
 
     def offset(n, profit, exclude):
         nonlocal cash
@@ -409,7 +424,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             avg_now = pos["cost"] / pos["shares"]
             if (time_add_days and d["add"][p] and c_prev < avg_now
                     and (dates[p] - dates[pos["start"]]).days // time_add_days > pos.get("time_adds", 0)):
-                invest = size(sid, n, min(cash, pos["budget"] * time_add_amount))
+                invest = size(sid, n, min(addable_cash(n, p, value_prev), pos["budget"] * time_add_amount))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -421,7 +436,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)
-                invest = size(sid, n, min(cash, invest))
+                invest = size(sid, n, min(addable_cash(n, p, value_prev), invest))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -548,6 +563,11 @@ def attach_fundamentals(data, dates):
         d["reversal_Ra"] = rx(ts | (c < ma10))
         d["reversal_Rb"] = rx(c < ma20)
         d["reversal_Rc"] = rx(ts | cross_down(k, dd))
+        lower, _, _ = bollinger(px)
+        r = rsi(c)
+        y = pd.Series(d["yield"], index=dates).reindex(px.index)
+        d["near_near1"] = rx((y >= 5.0) & ((k < 30) | (r < 35) | (c <= lower * 1.03)))
+        d["near_near2"] = rx((y >= 4.5) & ((k < 40) | (r < 40) | (c <= lower * 1.05)))
     return data
 
 

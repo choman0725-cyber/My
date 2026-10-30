@@ -72,7 +72,9 @@ def one(task):
         final = shares * px.iloc[e_n]
         seg = px.iloc[s_n:e_n + 1]
         return task, irr(flows, flow_dates, final, dates[e_n]), 100 * (seg / seg.cummax() - 1).min(), np.nan, np.nan
-    kw = {**RULES[rule], "cooldown": cd}
+    kw = {**RULES[rule]}
+    if "cooldown" not in kw:
+        kw["cooldown"] = cd
     sp = SPLITS[split]
     extra = {"slot_split": {"0050": (sp[0], G["zone"]["0050"]), "0056": (sp[1], G["zone"]["0056"])}} if sp else {}
     tr, eq = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, contributions=contrib,

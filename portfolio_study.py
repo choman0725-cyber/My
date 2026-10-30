@@ -173,7 +173,8 @@ def prepare(stock_ids, dates):
 
 def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, target_util=None,
         util_mode="committed", first=FIRST, offset_loss=False, capital=5_000_000,
-        offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False):
+        offset_frac=1.0, offset_only_stale=False, offset_only_bad=False, exit_bad=False, stale_free_slot=False,
+        removal_exit=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -188,7 +189,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
-    使用 offset_only_bad / exit_bad 前須先呼叫 attach_fundamentals(data, dates)。"""
+    removal_exit：被移出成分股後的伺機出場方式（不等 +20%）：
+      immediate＝隔天開盤就賣；breakeven＝扣成本後不虧就賣；half_target＝獲利 10% 就賣；
+      tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣。
+    使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
@@ -278,6 +282,15 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 close_out(sid, n, o, "停利")
                 sold_today.add(sid)
                 continue
+            if removal_exit and not mem.get(sid, no)[p]:
+                avg = pos["cost"] / pos["shares"]
+                even = c_prev * (1 - SELL_COST) >= avg
+                if (removal_exit == "immediate" or (removal_exit == "breakeven" and even)
+                        or (removal_exit == "half_target" and c_prev / avg - 1 >= TARGET / 2)
+                        or (removal_exit == "tech" and (even or d["tech_sell"][p]))):
+                    close_out(sid, n, o, "移出名單出場")
+                    sold_today.add(sid)
+                    continue
             if exit_bad and d["bad"][p] and c_prev < pos["cost"] / pos["shares"]:
                 close_out(sid, n, o, "基本面變壞出場")
                 sold_today.add(sid)
@@ -367,6 +380,9 @@ def attach_fundamentals(data, dates):
             bad = flag.reindex(dates.union(flag.index)).ffill().reindex(dates).fillna(False).astype(bool).values
         y = d["yield"]
         d["bad"] = bad | (~np.isnan(y) & (y < 3))
+        px = d["df"].dropna(subset=["open", "close"])
+        t = pv_triggers(px)
+        d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values
     return data
 
 

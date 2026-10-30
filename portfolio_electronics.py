@@ -29,17 +29,19 @@ ELECTRONICS = {
 }
 BASES = {
     "原版": {},
+    "原版＋套牢不佔名額": {"stale_free_slot": True},
     "解讀二·冷卻7日": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
+    "解讀二·冷卻7日＋以盈補虧(僅變壞)": {"one_per_day": True, "cooldown": 7, "target_util": 0.8,
+                                     "util_mode": "invested", "first": 0.8, "offset_loss": True, "offset_only_bad": True},
 }
-OFFSETS = {
+REMOVALS = {
     "": {},
-    "＋以盈補虧(僅套1年或虧30%)": {"offset_loss": True, "offset_only_stale": True},
-    "＋以盈補虧(僅變壞)": {"offset_loss": True, "offset_only_bad": True},
-    "＋變壞且虧損直接出場": {"exit_bad": True},
+    "｜移出R1立刻賣": {"removal_exit": "immediate"},
+    "｜移出R2回本賣": {"removal_exit": "breakeven"},
+    "｜移出R3賺10%賣": {"removal_exit": "half_target"},
+    "｜移出R4技術賣訊或回本": {"removal_exit": "tech"},
 }
-SLOTS = {"": {}, "＋套牢不佔名額": {"stale_free_slot": True}}
-VARIANTS = {b + sl + o: {**bk, **slk, **ok} for b, bk in BASES.items() for sl, slk in SLOTS.items()
-            for o, ok in OFFSETS.items()}
+VARIANTS = {b + r: {**bk, **rk} for b, bk in BASES.items() for r, rk in REMOVALS.items()}
 
 
 def main():
@@ -64,7 +66,7 @@ def main():
                 tr[col] = tr[col] * CAPITAL
             closed = tr[tr["出場"].notna()]
             key = f"{uname}｜{vname}"
-            rows[key] = {"電子股池": len(sub), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4,
+            rows[key] = {"移出名單出場": int((tr["原因"] == "移出名單出場").sum()), "電子股池": len(sub), "期末資產(萬)": eq.iloc[-1] * CAPITAL / 1e4,
                          **{k: v for k, v in ps.stats(eq).items()}, "筆數": len(tr), "已結案": len(closed),
                          "勝率%": 100 * (closed["報酬%"] > 0).mean(), "持有中": int(tr["出場"].isna().sum()),
                          "以盈補虧次數": int(tr["原因"].astype(str).str.startswith("以盈補虧").sum()),
@@ -82,7 +84,7 @@ def main():
     with pd.option_context("display.width", 250, "display.max_rows", 300, "display.unicode.east_asian_width", True):
         print(table.round(1).to_string(), "\n")
         for key, tr in details.items():
-            if "以盈補虧" in key:
+            if "以盈補虧" in key or "移出" in key:
                 continue
             hold = tr[tr["出場"].isna()].copy()
             hold["約股數"] = [int(m / raw_last[s]) for m, s in zip(hold["市值"], hold["代號"])]

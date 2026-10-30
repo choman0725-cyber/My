@@ -182,7 +182,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
-        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None):
+        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -211,6 +211,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
+    settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
+      mode "all"＝全部出清重來，"profit"＝只賣有賺的，"target"＝只賣獲利已達停利門檻的（不管殖利率）。
     ledger：傳入 list 時，每一筆成交（買進／加碼／賣出／追加資金）都記一列：日期、代號、動作、價格、股數、金額、
       成交後現金、持股檔數、持股市值與總資產（以前一日收盤計）。金額單位同 capital（1.0＝初始資金）。
     tranches：分批出場，取代停利＋hold_yield 的單一賣點。例如 [(0.5, 0.10, 5.0), (0.5, 0.20, 4.5)]＝
@@ -393,6 +395,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             o, c_prev = d["open"][n], d["close"][p]
             if np.isnan(o) or np.isnan(c_prev):
                 continue
+            if settle and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
+                g_ = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1
+                if settle[1] == "all" or (settle[1] == "profit" and g_ > 0) or (settle[1] == "target" and g_ >= TARGET):
+                    close_out(sid, n, o, f"定期結算({settle[0]}個月)")
+                    sold_today.add(sid)
+                    continue
             held = (dates[p] - dates[pos["start"]]).days
             target = TARGET
             if target_schedule:

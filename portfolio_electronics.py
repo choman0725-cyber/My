@@ -29,18 +29,17 @@ ELECTRONICS = {
 }
 RECOMMENDED = {
     "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
-    "②原版＋套牢不佔名額": {"stale_free_slot": True},
 }
 SPLITS = {"0050區2檔＋0056區3檔": (2, 3), "0050區3檔＋0056區2檔": (3, 2)}
 _R5 = {"removal_exit": "tech_profit", "free_slot_removed": True}
 _A = {**_R5, "target_schedule": [(0, 0.20), (365, 0.0)], "offset_loss": True, "offset_min_hold_days": 365,
       "time_add_days": 182}
 EXITS = {
-    "·原規則": _R5,
+    "·原規則(不停損)": _R5,
     "·H0滿2年強制賣": {**_R5, "max_hold_days": 730},
-    "·A回本賣＋補虧＋每半年加碼(不需好標的)": _A,
-    "·A回本賣＋補虧＋每半年加碼＋需好標的": {**_A, "need_candidate": True},
-    "·A＋需好標的＋滿2年強制賣": {**_A, "need_candidate": True, "max_hold_days": 730},
+    "·保險:滿3年強制賣": {**_R5, "max_hold_days": 1095},
+    "·保險:公司四季EPS轉負出場": {**_R5, "exit_eps_loss": True},
+    "·保險:兩者都加": {**_R5, "max_hold_days": 1095, "exit_eps_loss": True},
 }
 VARIANTS = {f"{r}｜{sp}{e}": ({**rk, **ek}, split) for r, rk in RECOMMENDED.items() for sp, split in SPLITS.items()
             for e, ek in EXITS.items()}
@@ -79,7 +78,7 @@ def main():
                      "持有>1年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 365).sum()),
                      "持有>2年": int((((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days > 730).sum()),
                      "最長持有(年)": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days.max()) / 365,
-                     "強制出場": int((tr["原因"] == "持有滿期強制出場").sum()),
+                     "強制出場": int(tr["原因"].isin(["持有滿期強制出場", "公司虧損出場"]).sum()),
                      "強制出場虧損(萬)": ((tr["回收"] - tr["投入"])[tr["原因"] == "持有滿期強制出場"]).sum() / 1e4,
                      "平均持有天": (((tr["出場"].fillna(dates[-1])) - tr["進場"]).dt.days).mean()}
         details[key] = tr

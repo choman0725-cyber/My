@@ -177,7 +177,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
-        late_tech_days=None, offset_min_hold_days=None, need_candidate=False):
+        late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -197,6 +197,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    exit_eps_loss：最近四季 EPS 合計轉負（公司虧損）時，不論賺賠隔天開盤出場（需 attach_fundamentals）。
     need_candidate：降低停利（target_schedule 中低於 TARGET 的門檻）與以盈補虧，只有在當天有其他
       「可以買的好標的」（殖利率 ≥5% ＋ 技術買點、仍在成分股、尚未持有）時才執行，換股用。
     offset_min_hold_days：以盈補虧只處理持有超過這麼多天的虧損部位。
@@ -330,6 +331,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if late_tech_days and held >= late_tech_days and d["tech_sell"][p] \
                     and c_prev * (1 - SELL_COST) >= pos["cost"] / pos["shares"]:
                 close_out(sid, n, o, "持有久＋技術賣訊")
+                sold_today.add(sid)
+                continue
+            if exit_eps_loss and d["eps_loss"][p]:
+                close_out(sid, n, o, "公司虧損出場")
                 sold_today.add(sid)
                 continue
             if max_hold_days and held >= max_hold_days:
@@ -474,6 +479,11 @@ def attach_fundamentals(data, dates):
             bad = flag.reindex(dates.union(flag.index)).ffill().reindex(dates).fillna(False).astype(bool).values
         y = d["yield"]
         d["bad"] = bad | (~np.isnan(y) & (y < 3))
+        loss = np.zeros(len(dates), bool)
+        if len(e) >= 4:
+            ttm = pd.Series(e["eps"].rolling(4).sum().values, index=e["published"]).groupby(level=0).last()
+            loss = (ttm < 0).reindex(dates.union(ttm.index)).ffill().reindex(dates).fillna(False).astype(bool).values
+        d["eps_loss"] = loss
         px = d["df"].dropna(subset=["open", "close"])
         t = pv_triggers(px)
         d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values

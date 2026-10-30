@@ -177,7 +177,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         removal_exit=None, trap_days=None, slot_split=None, offset_only_deep=False,
         free_slot_removed=False, free_slot_deep=False, contributions=None,
         time_add_days=None, time_add_amount=0.20, target_schedule=None, max_hold_days=None,
-        late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False):
+        late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
+        start_n=1, end_n=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -197,6 +198,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     target_schedule：依持有天數調整停利門檻，例如 [(0, 0.20), (365, 0.10), (548, 0.0)]＝
       滿 1 年改賺 10% 賣、滿 1.5 年回本就賣（0.0 表示扣成本後不虧）。
     max_hold_days：持有滿這麼多天，不論賺賠，隔天開盤強制賣出。
+    start_n / end_n：只在 dates[start_n]～dates[end_n] 之間交易與計算（資產曲線也只含這段），
+      用來做樣本內（例如只跑前 7 年）與不同起始日的穩健度測試。
     exit_eps_loss：最近四季 EPS 合計轉負（公司虧損）時，不論賺賠隔天開盤出場（需 attach_fundamentals）。
     need_candidate：降低停利（target_schedule 中低於 TARGET 的門檻）與以盈補虧，只有在當天有其他
       「可以買的好標的」（殖利率 ≥5% ＋ 技術買點、仍在成分股、尚未持有）時才執行，換股用。
@@ -295,7 +298,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                        "被踢出": pos["removed"], "報酬%": 100 * (proceeds / pos["cost"] - 1),
                        "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[n] - dates[pos["start"]]).days})
 
-    for n in range(1, len(dates)):
+    end_n = len(dates) - 1 if end_n is None else end_n
+    for n in range(max(start_n, 1), end_n + 1):
         p = n - 1
         if contributions and n in contributions:
             cash += contributions[n]
@@ -452,13 +456,13 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         equity.append(value)
         exposure.append(1 - cash / value if value > 0 else 0.0)
     for sid, pos in positions.items():
-        last = data[sid]["close_ff"][-1]
+        last = data[sid]["close_ff"][end_n]
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": None, "原因": "持有中", "加碼": pos["adds"],
                        "投入": pos["cost"], "市值": pos["shares"] * last,
                        "被踢出": pos["removed"], "報酬%": 100 * (pos["shares"] * last * (1 - SELL_COST) / pos["cost"] - 1),
-                       "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[-1] - dates[pos["start"]]).days})
+                       "最深套牢%": 100 * (pos["low"] / pos["first"] - 1), "持有日": (dates[end_n] - dates[pos["start"]]).days})
     cols = ["代號", "進場", "出場", "原因", "加碼", "被踢出", "報酬%", "最深套牢%", "持有日", "投入", "回收", "市值"]
-    eq = pd.Series(equity, index=dates[1:])
+    eq = pd.Series(equity, index=dates[max(start_n, 1):end_n + 1])
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
     return pd.DataFrame(trades, columns=cols), eq
 

@@ -182,7 +182,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         late_tech_days=None, offset_min_hold_days=None, need_candidate=False, exit_eps_loss=False,
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
-        tech_exit=None, tech_exit_profit=False, tranches=None):
+        tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -211,6 +211,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hold_yield：獲利達停利門檻時，若預估殖利率仍 >= hold_yield（%）就續抱；殖利率跌破且獲利仍達門檻才賣。
       hold_yield_floor：曾達門檻後，獲利回落到「門檻 − floor」以下就賣（保利）；
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
+    ledger：傳入 list 時，每一筆成交（買進／加碼／賣出／追加資金）都記一列：日期、代號、動作、價格、股數、金額、
+      成交後現金、持股檔數、持股市值與總資產（以前一日收盤計）。金額單位同 capital（1.0＝初始資金）。
     tranches：分批出場，取代停利＋hold_yield 的單一賣點。例如 [(0.5, 0.10, 5.0), (0.5, 0.20, 4.5)]＝
       獲利 >= 10% 且殖利率 < 5% 先賣一半；剩下一半獲利 >= 20% 且殖利率 < 4.5% 再賣。
       分批賣出後部位仍佔名額、仍可依原規則加碼；其他出場（EPS 轉負、移出名單等）照舊整筆出清。
@@ -338,11 +340,21 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             if pos["shares"] <= 1e-12:
                 positions.pop(sid)
 
+    def log(n, sid, action, price, shares_delta, amount, note=""):
+        if ledger is None:
+            return
+        p_ = n - 1
+        mv = sum(q["shares"] * data[s_]["close_ff"][p_] for s_, q in positions.items())
+        ledger.append({"日期": dates[n], "代號": sid, "動作": action, "價格": price, "股數": shares_delta, "金額": amount,
+                       "說明": note, "現金": cash, "持股檔數": len(positions), "持股市值": mv, "總資產": cash + mv,
+                       "持股": "、".join(f"{s_}({q['shares'] * data[s_]['close_ff'][p_] / (cash + mv):.0%})" for s_, q in positions.items())})
+
     def close_out(sid, n, price, reason):
         nonlocal cash
         pos = positions.pop(sid)
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
+        log(n, sid, "賣出", price, -pos["shares"], proceeds, f"{reason}；成本 {pos['cost']:.4f}，損益 {100 * (proceeds / pos['cost'] - 1):+.1f}%")
         if offset_loss and reason == "停利":
             pending_offsets.append((proceeds - pos["cost"]) * offset_frac)
         trades.append({"代號": sid, "進場": dates[pos["start"]], "出場": dates[n], "原因": reason, "加碼": pos["adds"],
@@ -355,6 +367,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         p = n - 1
         if contributions and n in contributions:
             cash += contributions[n]
+            log(n, "", "追加資金", np.nan, 0.0, contributions[n])
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
         pending_offsets = []
@@ -416,6 +429,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         pos["shares"] -= sh
                         pos["cost"] -= cost_part
                         pos["tranche"] = k + 1
+                        log(n, sid, "賣出", o, -sh, proceeds, f"停利第{k + 1}批")
                         continue
             elif gain >= target:
                 y = d["yield"][p]
@@ -477,6 +491,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos["cost"] += invest
                     pos["time_adds"] = (dates[p] - dates[pos["start"]]).days // time_add_days
                     cash -= invest
+                    log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"定期加碼第{pos['time_adds']}次（持有滿{time_add_days}天仍虧損）")
                     continue
             if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"]:
                 invest = pos["budget"] * ADDS[pos["adds"]]
@@ -489,6 +504,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos["cost"] += invest
                     pos["adds"] += 1
                     cash -= invest
+                    log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"跌深加碼第{pos['adds']}次（曾跌到首買價{ADD_STEPS[pos['adds'] - 1]:.0%}）")
         for profit in (pending_offsets if has_cand else []):
             before = set(positions)
             offset(n, profit, sold_today)
@@ -537,6 +553,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 cash -= invest
+                log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {first:.0%}）")
                 last_buy_n = n
                 picked += 1
                 if zone:

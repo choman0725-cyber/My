@@ -42,7 +42,9 @@ def main():
     L["價格"] = L["價格"].round(2)
     L["說明"] = L["說明"].str.replace(r"成本 ([0-9.]+)", lambda m: f"成本 {float(m.group(1)) * cap / 1e4:,.1f} 萬", regex=True) \
                      .str.replace(r"額度 ([0-9.]+)", lambda m: f"額度 {float(m.group(1)) * cap / 1e4:,.1f} 萬", regex=True)
-    L = L[["日期", "代號", "名稱", "動作", "價格", "股數", "金額", "說明", "現金", "持股檔數", "持股市值", "總資產", "持股"]]
+    L["庫存水位pct"] = (100 * L["持股市值"] / L["總資產"]).round(1)
+    L["現金pct"] = (100 * L["現金"] / L["總資產"]).round(1)
+    L = L[["日期", "代號", "名稱", "動作", "價格", "股數", "金額", "說明", "現金", "現金pct", "持股檔數", "持股市值", "庫存水位pct", "總資產", "持股"]]
     L.to_csv(RESULTS / "對帳單_正式版.csv", index=False, encoding="utf-8-sig")
 
     # 年底持股快照：重跑到每年最後一個交易日取部位
@@ -64,6 +66,20 @@ def main():
     S = pd.DataFrame(snaps)
     S.to_csv(RESULTS / "對帳單_正式版_年底持股.csv", index=False, encoding="utf-8-sig")
 
+    # 每月月底庫存水位
+    months = []
+    for me in pd.Series(dates[s_n:]).groupby(dates[s_n:].to_period("M")).last():
+        e_n = dates.get_loc(me)
+        _, eq_m = ps.run(G["sub"], G["member"], dates, capital=cap, contributions=contrib, start_n=s_n, end_n=e_n, **kw)
+        pos, cash = eq_m.attrs["positions"], eq_m.attrs["cash"]; total = eq_m.iloc[-1]
+        w = sorted(((q["shares"] * G["sub"][sid]["close_ff"][e_n] / total, sid) for sid, q in pos.items()), reverse=True)
+        months.append(dict(月底=me.date(), 總資產萬=round(total * cap / 1e4), 現金萬=round(cash * cap / 1e4), 現金pct=round(100 * cash / total, 1),
+                           庫存水位pct=round(100 * (1 - cash / total), 1), 持股檔數=len(pos), 佔名額檔數=sum(1 for sid, q in pos.items()
+                               if not ((dates[e_n] - dates[q["start"]]).days > ps.STALE_DAYS or G["sub"][sid]["close_ff"][e_n] / (q["cost"] / q["shares"]) - 1 < ps.STALE_LOSS)
+                               and G["member"][sid].iloc[e_n]),
+                           持股=" ".join(f"{sid}({100 * wt:.0f}%)" for wt, sid in w)))
+    MO = pd.DataFrame(months); MO.to_csv(RESULTS / "對帳單_正式版_月底水位.csv", index=False, encoding="utf-8-sig")
+
     # 年報酬與總結
     yr = eq.groupby(eq.index.year).last() * cap
     base = pd.Series({dates[s_n].year - 1: cap})
@@ -81,9 +97,12 @@ def main():
     for y, v in yr.items():
         md.append(f"| {y} | {v / 1e4:,.0f} | {rets.get(y, np.nan):+.1f}% |")
     md += ["", "## 逐筆交易", "", "金額含成本；「現金」「總資產」是這筆成交後的數字（持股以前一日收盤計）。", "",
-           "| 日期 | 代號 | 動作 | 價格 | 股數 | 金額（萬） | 說明 | 現金（萬） | 總資產（萬） | 持股（占比） |", "|---|---|---|---|---|---|---|---|---|---|"]
+           "| 日期 | 代號 | 動作 | 價格 | 股數 | 金額（萬） | 說明 | 現金（萬） | 現金% | 庫存水位% | 檔數 | 總資產（萬） | 持股（占比） |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in L.iterrows():
-        md.append(f"| {r['日期'].date()} | {r['代號']} {r['名稱']} | {r['動作']} | {'' if np.isnan(r['價格']) else r['價格']} | {r['股數']:,.0f} | {r['金額'] / 1e4:,.1f} | {r['說明']} | {r['現金'] / 1e4:,.0f} | {r['總資產'] / 1e4:,.0f} | {r['持股']} |")
+        md.append(f"| {r['日期'].date()} | {r['代號']} {r['名稱']} | {r['動作']} | {'' if np.isnan(r['價格']) else r['價格']} | {r['股數']:,.0f} | {r['金額'] / 1e4:,.1f} | {r['說明']} | {r['現金'] / 1e4:,.0f} | {r['現金pct']} | {r['庫存水位pct']} | {r['持股檔數']} | {r['總資產'] / 1e4:,.0f} | {r['持股']} |")
+    md += ["", "## 每月月底庫存水位", "", "| 月底 | 總資產（萬） | 現金（萬） | 現金% | 庫存水位% | 持股檔數 | 佔名額 | 持股（占比） |", "|---|---|---|---|---|---|---|---|"]
+    for _, r in MO.iterrows():
+        md.append(f"| {r['月底']} | {r['總資產萬']:,} | {r['現金萬']:,} | {r['現金pct']} | {r['庫存水位pct']} | {r['持股檔數']} | {r['佔名額檔數']}/5 | {r['持股']} |")
     md += ["", "## 每年年底持股", ""]
     for y, g in S.groupby("年底", sort=True):
         md += [f"### {y}", "", "| 代號 | 進場 | 股數 | 平均成本 | 收盤 | 市值（萬） | 損益 | 占比 | 加碼次數 |", "|---|---|---|---|---|---|---|---|---|"]

@@ -8,6 +8,7 @@ python3 backtest.py 2382 7
 python3 wick_study.py
 python3 validate.py
 python3 reverse_study.py
+python3 short_study.py
 python3 -c "import combo_study as c, indicators as i
 for g, tag in [('MACD_KD_STRATEGIES','macd_kd'),('KD_MACD_STRATEGIES','kd_macd'),('KD_BOLLINGER_STRATEGIES','kd_bollinger'),('ZONE_PV_STRATEGIES','zone_pv'),('KD_PV_STRATEGIES','kd_pv')]:
     c.main('2382', 7, getattr(i, g), tag)"

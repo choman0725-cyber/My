@@ -62,4 +62,5 @@
 
 - 引擎：`portfolio_study.py`（`run()`）、`param_opt.py`（參數→引擎設定、`BASE_A`）
 - 每日執行：`daily_run.py`
+- 做空研究（結論：不做空，見 `SHORT_STUDY.md`）：`short_study.py`、`results/short_*.csv`
 - 研究結果：`results/param_opt_*.csv`、`target_scan.csv`、`mix_v12_*.csv`、`tranche_*.csv`、`slots_*.csv`、`etf_split_*.csv`、`money_12_475.csv`

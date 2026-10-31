@@ -151,8 +151,30 @@ def finmind_price_frame(raw):
     df = raw.rename(columns={"max": "high", "min": "low", "Trading_Volume": "volume"})
     df["date"] = pd.to_datetime(df["date"])
     df = df[cols]
-    df = df[(df["volume"] > 0) & (df["close"] > 0)].drop_duplicates("date").sort_values("date")
-    return df.reset_index(drop=True)
+    df = df[(df["volume"] > 0) & (df["close"] > 0)].drop_duplicates("date").sort_values("date").reset_index(drop=True)
+    # 資料錯誤 1：開高低為 0（例：2633 2015-12-25 開盤 0）→ 用收盤價代替
+    for c in ("open", "high", "low"):
+        df.loc[df[c] <= 0, c] = df["close"]
+    # 資料錯誤 2：單日腰斬／翻倍、隔天又回到原水準（例：8454 2014-09-09 收盤 3.43）→ 刪除該日
+    prev, nxt = df["close"].shift(1), df["close"].shift(-1)
+    spike = ((df["close"] / prev < 0.5) | (df["close"] / prev > 2)) & ((nxt / prev - 1).abs() < 0.15)
+    return df[~spike].reset_index(drop=True)
+
+
+def inferred_reductions(df, events, gap_days=7, jump=0.11):
+    """停牌 ≥ gap_days 天後恢復交易、開盤比停牌前收盤高 > jump，且 ±10 天內沒有已知事件 → 推定為減資。
+    FinMind 減資資料集只有 2011 年起（例：2412 中華電 2009-03、2408 南亞科 2009-08、2633 高鐵 2015-12 都沒有）。
+    係數 = 恢復日開盤 ÷ 停牌前收盤（以開盤近似減資後參考價）。只推定「往上跳」：減資一定讓每股價格變高，
+    往下跳可能是真實下跌，不調整。"""
+    out = []
+    d = df["date"].reset_index(drop=True)
+    for i in range(1, len(df)):
+        if (d[i] - d[i - 1]).days < gap_days:
+            continue
+        k = df["open"].iloc[i] / df["close"].iloc[i - 1]
+        if k - 1 > jump and not any(abs((d[i] - e).days) <= 10 for e, _ in events):
+            out.append((d[i], k))
+    return out
 
 
 def build_prices(new, events):
@@ -246,7 +268,7 @@ def main():
             if not div.empty:
                 div_new.append(div)
             reduction = fm.get("TaiwanStockCapitalReductionReferencePrice", sid, a.start, a.end, optional=True)
-            split = fm.get("TaiwanStockSplitPrice", sid, a.start, a.end, optional=True)
+        split = fm.get("TaiwanStockSplitPrice", sid, a.start, a.end, optional=True)  # ETF 也會分割（0050 2025-06 一拆四）
         if not res.empty:
             res_new.append(res)
 
@@ -261,14 +283,19 @@ def main():
         if new.empty:
             print(f"{label}：FinMind 沒有日線，{'保留現有檔案' if old is not None else '略過'}")
             continue
+        inferred = inferred_reductions(new, events)
+        events = sorted(events + inferred)
         built = build_prices(new, events)
         diff = compare(old, built)
         report.append({"stock_id": sid, "name": names.get(sid, ""), "old_rows": 0 if old is None else len(old),
                        "rows": len(built), "first_date": built["date"].iloc[0], "last_date": built["date"].iloc[-1],
-                       "adjust_events": len(events), **diff})
+                       "adjust_events": len(events),
+                       "inferred_reductions": "；".join(f"{d:%Y-%m-%d}×{k:.3f}" for d, k in inferred), **diff})
         note = ""
         if diff.get("close_diff_days"):
             note = f"；重疊期 {diff['close_diff_days']} 天收盤價與現有差 >0.5%（現有為 yfinance 配股調整價）"
+        if inferred:
+            note += "；推定減資 " + "、".join(f"{d:%Y-%m-%d}" for d, _ in inferred)
         print(f"{label}：{0 if old is None else len(old)} → {len(built)} 筆，"
               f"{built['date'].iloc[0]} ~ {built['date'].iloc[-1]}{note}")
         if not a.dry_run:

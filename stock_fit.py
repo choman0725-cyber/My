@@ -121,13 +121,12 @@ def check(sid, t):
 def build(sid, dates, t):
     """建立一檔的引擎資料（同 prepare ＋ attach_fundamentals），外加四種技術買點訊號。"""
     df, raw_close = load_prices(sid)
-    dps = ps.forward_dividend(df.index, ps.eps_table(t["eps_all"], sid),
-                              ps.dividend_events(t["dividend_all"], sid, t["dividend_result_all"]))
+    y = ps.yield_series(raw_close, dates, ps.eps_table(t["eps_all"], sid),
+                        ps.dividend_events(t["dividend_all"], sid, t["dividend_result_all"])).values
     sigs, add = entries(df)
     d = df.reindex(dates)
     last = d["close"].last_valid_index()
     delisted = last is not None and last < dates[-1] - pd.Timedelta(days=10)
-    y = (100 * dps / raw_close).reindex(dates).values
     out = {"df": d, "open": d["open"].values, "close": d["close"].values, "low": d["low"].values,
            "close_ff": d["close"].ffill().values, "last_n": dates.get_loc(last) if delisted else len(dates) + 1,
            "add": add.reindex(dates).fillna(False).astype(bool).values, "yield": y,

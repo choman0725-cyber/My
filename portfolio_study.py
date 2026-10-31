@@ -153,7 +153,7 @@ def prepare(stock_ids, dates):
             skipped.append(sid)
             continue
         df, raw_close = loaded
-        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
+        y = yield_series(raw_close, dates, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
         sigs, add = entries(df)
         d = df.reindex(dates)
         last = d["close"].last_valid_index()
@@ -164,11 +164,22 @@ def prepare(stock_ids, dates):
             "open": d["open"].values, "close": d["close"].values, "low": d["low"].values,
             "close_ff": d["close"].ffill().values,
             "last_n": dates.get_loc(last) if delisted else len(dates) + 1,
-            "buy": (sigs["任一"] & (100 * dps / raw_close >= MIN_YIELD)).reindex(dates).fillna(False).astype(bool).values,
+            "buy": (sigs["任一"].reindex(dates).fillna(False).astype(bool) & (y >= MIN_YIELD)).values,
             "add": add.reindex(dates).fillna(False).astype(bool).values,
-            "yield": (100 * dps / raw_close).reindex(dates).values,
+            "yield": y.values,
         }
     return data, skipped
+
+
+def yield_series(raw_close, dates, eps, div, ffill_limit=5):
+    """每日預估殖利率（%），對齊交易日曆 dates。
+    價格檔缺的交易日（yfinance 沒有週六補班日等，全池約 805 個股票日）用前一個有價日的原始收盤延續，最多 5 天；
+    否則那幾天殖利率算不出來，續抱規則「算不出殖利率視同 < 4.75%」會把本來該續抱的部位賣掉。
+    上市前、下市後仍為 NaN。"""
+    cal = dates[(dates >= raw_close.index[0]) & (dates <= raw_close.index[-1])]
+    dps = forward_dividend(cal, eps, div)
+    px = raw_close.reindex(cal).ffill(limit=ffill_limit)
+    return (100 * dps / px).reindex(dates)
 
 
 # ---------- 回測 ----------

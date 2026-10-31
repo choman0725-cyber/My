@@ -64,10 +64,12 @@ GRADE = {
 
 def tables():
     t = {}
-    for name in ("eps_all", "dividend_all", "dividend_result_all"):
-        parts = [pd.read_csv(ps.UNI / f"{name}.csv")]
-        if (CAND / f"{name}.csv").exists():
-            parts.append(pd.read_csv(CAND / f"{name}.csv"))
+    for name in ("eps_all", "dividend_all", "dividend_result_all", "share_events_all"):
+        parts = [pd.read_csv(p, dtype={"stock_id": str}, parse_dates=["date"] if name == "share_events_all" else None)
+                 for p in (ps.UNI / f"{name}.csv", CAND / f"{name}.csv") if p.exists()]
+        if not parts:
+            t[name] = None
+            continue
         t[name] = pd.concat(parts, ignore_index=True)
         t[name]["stock_id"] = t[name]["stock_id"].astype(str)
     return t
@@ -121,8 +123,9 @@ def check(sid, t):
 def build(sid, dates, t):
     """建立一檔的引擎資料（同 prepare ＋ attach_fundamentals），外加四種技術買點訊號。"""
     df, raw_close = load_prices(sid)
-    y = ps.yield_series(raw_close, dates, ps.eps_table(t["eps_all"], sid),
-                        ps.dividend_events(t["dividend_all"], sid, t["dividend_result_all"])).values
+    eps, div, raw_close = ps.fundamentals_on_share_basis(sid, raw_close, t["eps_all"], t["dividend_all"],
+                                                        t["dividend_result_all"], t.get("share_events_all"))
+    y = ps.yield_series(raw_close, dates, eps, div).values
     sigs, add = entries(df)
     d = df.reindex(dates)
     last = d["close"].last_valid_index()

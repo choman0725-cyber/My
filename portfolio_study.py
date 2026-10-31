@@ -142,10 +142,43 @@ def membership(constituents, dates):
     return {k: pd.Series(v, index=dates) for k, v in member.items()}
 
 
+def share_basis(events, when, inclusive=False):
+    """把「when 當時的每股數字」換成最新股數基準的除數：Π(變動後÷變動前股數, 變動日 > when)；inclusive 時含當天。
+    分割、配股、減資會改變股數；EPS、股利是當時的每股數字，原始股價也是，三者都除以這個值才能互相比。"""
+    when = pd.DatetimeIndex(pd.to_datetime(when))
+    out = np.ones(len(when))
+    for d, r in events:
+        out[(when <= d) if inclusive else (when < d)] *= r
+    return out
+
+
+def load_share_events():
+    """data/universe/share_events_all.csv（分割、配股、減資的股數比例）；沒有檔案回傳 None（不調整，等於舊行為）。"""
+    sp = UNI / "share_events_all.csv"
+    return pd.read_csv(sp, dtype={"stock_id": str}, parse_dates=["date"]) if sp.exists() else None
+
+
+def fundamentals_on_share_basis(sid, raw_close, eps_all, div_all, res_all, share_all):
+    """回傳 (eps 表, 股利表, 原始收盤)，三者都換成最新股數基準。
+    殖利率＝預估股利 ÷ 股價：EPS（季末後的股數變動）、股利（除息日當天起的變動，配股與配息同日）、
+    股價（當天之後的變動）都除以同一組比例才能互相比。例：6669 2026-09 一拆三後，拆前的 EPS 要 ÷3 才能配新股價。
+    注意：這裡的原始收盤必須是當天真實成交價（FinMind），不能是 yfinance 已做分割調整的 close。"""
+    eps, div = eps_table(eps_all, sid), dividend_events(div_all, sid, res_all)
+    if share_all is not None:
+        ev = list(share_all.loc[share_all["stock_id"] == sid, ["date", "share_ratio"]].itertuples(index=False, name=None))
+        if ev:
+            eps = eps.assign(eps=eps["eps"] / share_basis(ev, eps["quarter_end"]))
+            when = div["ex_date"].fillna(div["announced"])
+            div = div.assign(cash=div["cash"] / share_basis(ev, when, inclusive=True))
+            raw_close = raw_close / share_basis(ev, raw_close.index)
+    return eps, div, raw_close
+
+
 def prepare(stock_ids, dates):
     eps_all = pd.read_csv(UNI / "eps_all.csv")
     div_all = pd.read_csv(UNI / "dividend_all.csv")
     res_all = pd.read_csv(UNI / "dividend_result_all.csv")
+    share_all = load_share_events()
     data, skipped = {}, []
     for sid in stock_ids:
         loaded = load_prices(sid)
@@ -153,7 +186,8 @@ def prepare(stock_ids, dates):
             skipped.append(sid)
             continue
         df, raw_close = loaded
-        y = yield_series(raw_close, dates, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
+        eps, div, raw_close = fundamentals_on_share_basis(sid, raw_close, eps_all, div_all, res_all, share_all)
+        y = yield_series(raw_close, dates, eps, div)
         sigs, add = entries(df)
         d = df.reindex(dates)
         last = d["close"].last_valid_index()

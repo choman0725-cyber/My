@@ -62,3 +62,10 @@
 - 股利政策 0 筆：1704、2311、2325、2823、3474。除權息結果有 1704、2311、2325、2823 的紀錄，可用來補。3474 在期間內沒有除權息。
 - 除權息結果 0 筆：3474、6919（康霈* 未曾除權息）。
 - 同一檔股利政策可能缺個別年度（例如 2382 缺 99 年）。用殖利率時請以 dividend_result_all.csv 交叉核對。
+
+## 更新（update_universe_finmind.py）
+
+`python update_universe_finmind.py [--start 2006-01-01] [--end 今天]` 用 FinMind 重建全部日線並合併財報／股利表：
+- open/high/low/close/volume 為 FinMind TaiwanStockPrice 原始價；adj_close 用除權息結果＋減資＋面額分割自算（公式同上）。
+- yfinance 的 close 已對配股／分割調整、不是當天真實價（例 6669 一拆三前的價格被除以 3），所以不再沿用。
+- 逐檔與舊資料的差異寫在 update_report.csv；原始回應快取在 `_finmind_cache/`（不進 git）。

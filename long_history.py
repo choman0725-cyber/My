@@ -121,9 +121,16 @@ def main(hedge=False):
         V = vehicles(d)
         base_h = dict(hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_add_timing="signal", hedge_add_cap="shortfall")
         tabs = {}
-        for name, arr in V.items():
+        runs = {name: {"hedge_index": arr} for name, arr in V.items()}
+        runs.update({"0050·第一次賣股後才開始": {"hedge_index": V["0050"], "hedge_from": "first_sell"},
+                     "0050·閒10天才投入": {"hedge_index": V["0050"], "hedge_idle_days": 10},
+                     "條件式·第一次賣股後才開始": {"hedge_index": V["條件式(年線上0050/線下短債)"], "hedge_from": "first_sell"}})
+        bond = next((k for k in V if "美債1-3" in k), None)
+        if bond:
+            runs["短債·手續費0（檢查鎖死）"] = {"hedge_index": V[bond], "hedge_cost": 0.0}
+        for name, extra in runs.items():
             led = []
-            tr_, eq_ = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=1, ledger=led, **kw, **base_h, hedge_index=arr)
+            tr_, eq_ = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=1, ledger=led, **kw, **{**base_h, **extra})
             hl = pd.DataFrame(eq_.attrs["hedge_log"])
             t_ = yearly_table(eq_, d, None, None, led)[["策略%", "年內最大回撤%", "年底現金%", "年底避險%", "期末萬"]]
             tabs[name] = t_

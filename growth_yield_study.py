@@ -149,7 +149,8 @@ def main():
         kw2 = {**kw, "hold_yield": "hy_rel"}
         for sname, s in (("2016-12-28", 1), ("2017-01-03", s_n)):
             tr, eq = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, start_n=s, **kw2)
-            g = tr[tr["代號"].isin([sid for sid in G["sub"] if np.nan_to_num(R[sid][1], nan=99)[s_n:].mean() < GROWTH_MED])]
+            pidx = dates.get_indexer(tr["進場"]) - 1
+            g = tr[[bool(np.nan_to_num(R[s_][1], nan=99)[p_] < GROWTH_MED) for s_, p_ in zip(tr["代號"], pidx)]] if k is not None else tr.iloc[0:0]
             money[(name, sname)] = dict(期末萬=round(eq.iloc[-1] * CAPITAL / 1e4), IRR=round(irr([CAPITAL], [dates[s]], eq.iloc[-1] * CAPITAL, dates[-1]), 1),
                                         回撤=round(100 * (eq / eq.cummax() - 1).min(), 1), 筆數=len(tr), 成長股筆數=len(g))
         print(f"  {name} 完成：三段 {m['三段平均']:.2f}", flush=True)
@@ -173,8 +174,8 @@ def main():
         print("\n== 接進正式版：20 情境＋後 3 年（配對相對 A）"); print(out[show].round(2).to_string())
         print("\n500 萬不追加"); print(mon.to_string())
     # 成長股名單（2017 起 3 年中位平均 < 4%）
-    gl = sorted([f"{sid}{names[sid]}" for sid in G["sub"] if np.nan_to_num(R[sid][1], nan=99)[s_n:].mean() < GROWTH_MED])
-    print("\n池內被視為成長股（3 年殖利率中位平均 < 4%）：", "、".join(gl))
+    flag = pd.DataFrame({sid: (np.nan_to_num(R[sid][1], nan=99) < GROWTH_MED) & G["member"][sid].values for sid in G["sub"]}, index=dates)
+    print("\n每年平均同時有幾檔在「成長股」狀態（3 年殖利率中位 < 4%）：", flag[dates >= "2017"].sum(axis=1).groupby(dates[dates >= "2017"].year).mean().round(1).to_dict())
 
 
 if __name__ == "__main__":

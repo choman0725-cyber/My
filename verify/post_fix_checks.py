@@ -18,6 +18,8 @@ def old_csv(p):
 
 se = pd.read_csv(U + "share_events_all.csv", dtype={"stock_id": str}); se["d"] = pd.to_datetime(se.date)
 res = pd.read_csv(U + "dividend_result_all.csv", dtype={"stock_id": str}); res["d"] = pd.to_datetime(res.date)
+dv = pd.read_csv(U + "dividend_all.csv", dtype={"stock_id": str})
+man = pd.read_csv(U + "capital_reductions_manual.csv", dtype={"stock_id": str})
 ohlcv_bad, unexplained, changed, jumps, refcheck = [], [], 0, [], []
 for f in sorted(glob.glob(U + "prices/*.csv")):
     sid = os.path.basename(f)[:-4]
@@ -32,7 +34,10 @@ for f in sorted(glob.glob(U + "prices/*.csv")):
     pts = pd.to_datetime(j.loc[step, "date"])
     if len(pts):
         changed += 1
-    ev = list(se[se.stock_id == sid].d) + list(res[res.stock_id == sid].d)
+    g = dv[dv.stock_id == sid]
+    ev = list(se[se.stock_id == sid].d) + list(res[res.stock_id == sid].d) \
+        + list(pd.to_datetime(g.StockExDividendTradingDate, errors="coerce").dropna()) + list(pd.to_datetime(g.CashExDividendTradingDate, errors="coerce").dropna()) \
+        + list(pd.to_datetime(man[man.stock_id == sid].date)) + ([pd.Timestamp("2011-04-21")] if sid == "3665" else []) + ([pd.Timestamp("2011-12-01")] if sid == "5880" else [])
     for p in pts:
         if not any(abs((p - e).days) <= 5 for e in ev):
             unexplained.append((sid, f"{p:%Y-%m-%d}", round(float(r[j.date == f'{p:%Y-%m-%d}'].iloc[0]), 5)))
@@ -58,6 +63,22 @@ print(f"3. 還原日報酬超過漲跌幅：{len(jd)} 天、{jd.stock_id.nunique
 print(jd.groupby("stock_id").date.agg(["count", "min", "max"]).sort_values("count", ascending=False).to_string())
 jd.to_csv(U + "_verify_cache/post_fix_jumps.csv", index=False)
 print(f"4. 除權息日還原報酬與參考價不符（>0.2%）：{len(refcheck)}", refcheck[:20])
+# 7. 2011 前減資：用人工表獨立算參考價，比對恢復日還原報酬
+mc = []
+for _, m in man.iterrows():
+    n = pd.read_csv(f"{U}prices/{m.stock_id}.csv"); i = n.index[n.date >= m.date][0]; p = n.close[i - 1]
+    sr = se[(se.stock_id == m.stock_id) & ((se.d - pd.Timestamp(m.date)).abs() <= pd.Timedelta(days=5)) & se.kind.str.startswith("減資")]
+    ratio = float(m.share_ratio) if pd.notna(m.share_ratio) else float(sr.share_ratio.iloc[0])
+    if pd.notna(m.ref_price):
+        ref = float(m.ref_price)
+    else:
+        cash = float(m.cash_per_share) if pd.notna(m.cash_per_share) else (10 * (1 - ratio) if "現金" in m.type else 0.0)
+        ref = (p - cash) / ratio
+    want = n.close[i] / ref - 1; got = n.adj_close[i] / n.adj_close[i - 1] - 1
+    mc.append((m.stock_id, n.date[i], round(want, 4), round(got, 4), round(n.open[i] / ref - 1, 4), len(sr) == 1 and abs(sr.share_ratio.iloc[0] / ratio - 1) < 1e-4))
+mc = pd.DataFrame(mc, columns=["stock_id", "date", "應有報酬", "檔案報酬", "開盤相對參考價", "share_events 比例相符"])
+print(f"7. 2011 前減資 {len(mc)} 筆：還原報酬不符（>0.2%）{int(((mc.應有報酬 - mc.檔案報酬).abs() > 0.002).sum())} 筆；股數比例不符 {int((~mc['share_events 比例相符']).sum())} 筆；開盤偏離參考價 >10.5%：{mc[mc.開盤相對參考價.abs() > 0.105].values.tolist()}")
+print(mc.to_string())
 print("5. share_events 各類筆數：", se.kind.value_counts().to_dict())
 o = old_csv(U + "share_events_all.csv")
 print(f"   share_events：{len(o)} → {len(se)} 筆")

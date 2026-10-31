@@ -157,11 +157,14 @@ def _num(x, c):
     return pd.to_numeric(x[c], errors="coerce").fillna(0) if c in x else pd.Series(0.0, index=x.index)
 
 
-def policy_events(div, res, prices):
-    """股利政策有除權息（或現增除權）日、但除權息結果沒有（±5 天）的事件，用政策數字自算參考價：
-    參考價 = (P − 現金股利 + 認購價×認購率) ÷ (1 + 配股元/10 + 認購率)，P＝前一交易日收盤。
-    多半是上市前（上櫃、興櫃）的除權息，例：6669 2018-07-26 配股 2.02 元＋配息 4.04 元、2018-02-08 現增 16%。
-    回傳 [(生效日, 係數, 種類, 股數比例或 None)]。"""
+def policy_events(div, res, prices, skip=()):
+    """股利政策有除權息日、但除權息結果沒有（±5 天）的配股／配息，用政策數字自算參考價：
+    參考價 = (P − 現金股利) ÷ (1 + 配股元/10)，P＝前一交易日收盤。
+    多半是上市前（上櫃、興櫃）的除權息，例：6669 2018-07-26 配股 2.02 元＋配息 4.04 元。
+    不補「現增除權」：股利政策的現增日期不一定是除權交易日（例：9941 2018-09-18 依政策參考價應為 91.8，當天開盤 103，
+    超過漲跌幅），現增只用除權息結果裡有的紀錄。
+    skip：減資、分割日（±5 天）不補——停牌期間的除息已含在減資參考價裡（例：1513 2014-12-10）。
+    回傳 [(生效日, 係數, 種類, None)]。"""
     if div is None or div.empty or "StockExDividendTradingDate" not in div or prices is None or prices.empty:
         return []
     x = div.copy()
@@ -185,16 +188,18 @@ def policy_events(div, res, prices):
     dates, close = pd.DatetimeIndex(prices["date"]), prices["close"].values
     out = []
     for d, (st, cash, rate, subp) in sorted(agg.items()):
+        if st == 0 and cash == 0:
+            continue
         if any(abs((d - e).days) <= 5 for e in rd) or d <= dates[0] or d > dates[-1]:
             continue
         i = dates.searchsorted(d)                      # 生效日＝d 當天或之後第一個交易日
-        p = close[i - 1]
-        ref = (p - cash + subp * rate) / (1 + st / 10 + rate)
-        if not (0 < ref < p * 1.5):
+        if any(abs((dates[i] - e).days) <= 5 for e in skip):
             continue
-        kind = "現增除權（股利政策）" if rate > 0 and st == 0 and cash == 0 else "除權息（股利政策）"
-        terp = (p + subp * rate) / (1 + rate) if rate > 0 else p   # 只有現增的部分給股數比例（配股另由配股列處理）
-        out.append((dates[i], ref / p, kind, p / terp if rate > 0 else None))
+        p = close[i - 1]
+        ref = (p - cash) / (1 + st / 10)
+        if not (0 < ref < p):
+            continue
+        out.append((dates[i], ref / p, "除權息（股利政策）", None))
     return out
 
 
@@ -337,12 +342,23 @@ def cum_factor(dates, events):
     return out.values
 
 
-def reduction_share_ratios(reduction):
+def reduction_share_ratios(reduction, div=None, prices=None):
     """FinMind 減資資料集 → [(日期, 股數比例)]。彌補虧損：減資前收盤 ÷ 減資後參考價。
     現金退還（每股退面額 10 元 ×減資比例）：參考價 R = (C − 10(1−r)) ÷ r → r = (C − 10) ÷ (R − 10)。
-    例：2412 2011-01-25 C=73.10、R=88.87 → 0.8001（官方減資 20%）；只用價格比會得到 0.8226。"""
+    例：2412 2011-01-25 C=73.10、R=88.87 → 0.8001（官方減資 20%）；只用價格比會得到 0.8226。
+    停牌期間若有除息，證交所的參考價已先扣掉現金股利 D：r = (C − D − 10) ÷ (R − 10)
+    （例：1513 2014-12-10 → 0.8756，FinMind 已發行股數實際 0.8750；不扣 D 會得到 0.9552）。"""
     if reduction is None or reduction.empty:
         return []
+    halt_cash = {}
+    if div is not None and not div.empty and "CashExDividendTradingDate" in div and prices is not None and len(prices):
+        dates = pd.DatetimeIndex(prices["date"])
+        cd = pd.to_datetime(div["CashExDividendTradingDate"], errors="coerce")
+        cash = _num(div, "CashEarningsDistribution") + _num(div, "CashStatutorySurplus")
+        for d in pd.to_datetime(reduction["date"]):
+            i = dates.searchsorted(d)
+            if 0 < i <= len(dates):
+                halt_cash[d] = float(cash[(cd > dates[i - 1]) & (cd <= d)].sum())
     out = []
     for _, x in reduction.drop_duplicates("date").iterrows():
         c = pd.to_numeric(x.get("ClosingPriceonTheLastTradingDay"), errors="coerce")
@@ -350,11 +366,12 @@ def reduction_share_ratios(reduction):
         if not (c > 0 and r > 0):
             continue
         cash = "cash" in str(x.get("ReasonforCapitalReduction", "")).lower()
-        out.append((pd.Timestamp(x["date"]), (c - 10) / (r - 10) if cash and r > 10 and c > 10 else c / r))
+        d = pd.Timestamp(x["date"]); dv = halt_cash.get(d, 0.0)
+        out.append((d, (c - dv - 10) / (r - 10) if cash and r > 10 and c - dv > 10 else (c - dv) / r))
     return out
 
 
-def share_events(sid, div, res, reduction, split, extra=(), lvl=None, log=None):
+def share_events(sid, div, res, reduction, split, extra=(), lvl=None, log=None, prices=None):
     """股數變動紀錄 [(stock_id, 日期, 種類, 變動後股數 ÷ 變動前股數)]，給殖利率換算同一股數基準用。
     配股：1 + (盈餘配股＋公積配股) ÷ 10（面額 10 元），日期＝除權交易日。
     股利政策缺漏時：
@@ -398,7 +415,7 @@ def share_events(sid, div, res, reduction, split, extra=(), lvl=None, log=None):
                 else:
                     log.append(f"{sid} {d:%Y-%m-%d} 權息但股利政策無配股、已發行股數也推不出比例（{r}），未記")
     for kind, lst in (("分割", [(d, 1 / k) for d, k in _events(split, "before_price", "after_price")]),
-                      ("減資", reduction_share_ratios(reduction))):
+                      ("減資", reduction_share_ratios(reduction, div, prices))):
         for d, ratio in lst:
             if not any(abs((d - d0).days) <= 5 and abs(ratio / r0 - 1) < 0.01 for d0, _, r0 in ev):
                 ev.append((d, kind, ratio))
@@ -580,15 +597,15 @@ def main():
             print(f"{label}：FinMind 沒有日線，{'保留現有檔案' if old is not None else '略過'}")
             continue
         # 股利政策有、除權息結果沒有的除權息／現增除權（多半在上市前）
-        pol = policy_events(div, res_all, new)
-        # FinMind 減資資料集沒有的減資（2011-01 以前）：已發行股數減少＋停牌
         known = [d for d, _ in _events(reduction, "ClosingPriceonTheLastTradingDay", "PostReductionReferencePrice")
                  + _events(split, "before_price", "after_price")]
+        pol = policy_events(div, res_all, new, known)
+        # FinMind 減資資料集沒有的減資（2011-01 以前）：已發行股數減少＋停牌
         unl = unlisted_reductions(lvl, new, known + [d for d, *_ in pol], manual, sid, market_days)
         events = adjust_events(res_all, reduction, split, [(d, k) for d, k, *_ in pol] + [(d, k) for d, k, *_ in unl])
         extra = [(d, kind, r) for d, k, kind, r in pol if r is not None] + [(d, "減資（2011 前，見 capital_reductions_manual.csv）" if "未查證" not in note else "減資（已發行股數推算，類型未查證）", r)
                                                                 for d, k, r, note in unl]
-        share_rows += share_events(sid, div if sid not in ETFS else None, res_all, reduction, split, extra, lvl, warn_log)
+        share_rows += share_events(sid, div if sid not in ETFS else None, res_all, reduction, split, extra, lvl, warn_log, new)
         for d, k, r, note in unl:                       # 參考價合理性：恢復日開盤應在參考價 ±10% 內
             j = new.index[new["date"] == d]
             if len(j) and j[0] > 0:

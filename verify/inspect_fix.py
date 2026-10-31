@@ -16,11 +16,11 @@ for sid in sys.argv[1:]:
     red = fm.get("TaiwanStockCapitalReductionReferencePrice", sid, "2006-01-01", "2026-10-31", cached_only=True)
     lvl = u.share_levels(fm.get("TaiwanStockShareholding", sid, "2006-01-01", "2026-10-31", cached_only=True))
     split = sp[sp.stock_id == sid] if not sp.empty else sp
-    pol = u.policy_events(div, res, new)
     known = [d for d, _ in u._events(red, "ClosingPriceonTheLastTradingDay", "PostReductionReferencePrice") + u._events(split, "before_price", "after_price")]
+    pol = u.policy_events(div, res, new, known)
     unl = u.unlisted_reductions(lvl, new, known + [d for d, *_ in pol], manual, sid, md)
     log = []
-    se = u.share_events(sid, div, res, red, split, [(d, kind, r) for d, k, kind, r in pol if r is not None] + [(d, f"減資（已發行股數；{n}）", r) for d, k, r, n in unl], lvl, log)
+    se = u.share_events(sid, div, res, red, split, [(d, kind, r) for d, k, kind, r in pol if r is not None] + [(d, f"減資（已發行股數；{n}）", r) for d, k, r, n in unl], lvl, log, new)
     ev = u.adjust_events(res, red, split, [(d, k) for d, k, *_ in pol] + [(d, k) for d, k, *_ in unl])
     built = u.build_prices(new, ev)
     print(f"== {sid} 已發行股數 {len(lvl)} 天；政策補事件 {[(f'{d:%Y-%m-%d}', round(k, 4), kind) for d, k, kind, _ in pol]}")

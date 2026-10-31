@@ -10,6 +10,7 @@
 
 用法：python build_constituents_pcf.py            # 抓 PCF、重建並改寫 constituents.csv
       python build_constituents_pcf.py --dry-run  # 只印異動表
+      python build_constituents_pcf.py --etf 0051 [--end 2026-10-30]  # 單獨一檔整段重建 → constituents_0051.csv
 """
 import json, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
@@ -93,6 +94,41 @@ def periods(df):
     return res, names
 
 
+def review_day(d, days):
+    """d 所在月份第三個星期五之後的第一個交易日。"""
+    fr = pd.date_range(d.replace(day=1), periods=31, freq="D"); fr = fr[(fr.month == d.month) & (fr.weekday == 4)][2]
+    return next((x for x in days if x > fr), d)
+
+
+def merge_changes(g, days, first_label):
+    """把 ETF 分幾天買賣的同一次調整合併：相鄰變動相差 ≤ 5 個交易日為同一群；
+    指數生效日（第三個週五後首個交易日）落在首次變動日前 3 ～ 後 2 個交易日內就用它，否則用 PCF 首次變動日。"""
+    pos = {d: i for i, d in enumerate(days)}
+    g = g.sort_values("effective_date").reset_index(drop=True)
+    clusters, cl = [], [0]
+    for i in range(1, len(g)):
+        if i > 1 and pos[g.effective_date[i]] - pos[g.effective_date[cl[-1]]] <= 5: cl.append(i)
+        else:
+            if i > 1: clusters.append(cl)
+            cl = [i]
+    clusters.append(cl)
+    periods = [(g.effective_date[0], g.members[0], first_label)]
+    for cl in clusters:
+        if cl == [0]: continue
+        start = g.effective_date[cl[0]]
+        rv = review_day(start, days)
+        if rv in pos and -3 <= pos[rv] - pos[start] <= 2: eff, kind = rv, "定期審核（第三個週五後首個交易日）"
+        else: eff, kind = start, "非定期（依 PCF 首次變動日）"
+        periods.append((eff, g.members[cl[-1]], kind))
+    return periods
+
+
+def table_row(etf, eff, mem, kind, prev, names):
+    add = sorted(mem - prev) if prev is not None else []; rm = sorted(prev - mem) if prev is not None else []
+    return (f"| {etf} | {eff:%Y-%m-%d} | {len(mem)} | {kind} | {'、'.join(s + ' ' + names.get(s, '') for s in add) or '-'} | "
+            f"{'、'.join(s + ' ' + names.get(s, '') for s in rm) or '-'} |")
+
+
 def finalize(per, names, pcf, dry):
     cons = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     # 只保留原本（2016 PCF＋公告）整理的期間；重跑時去掉上次由本程式加的舊期間
@@ -100,33 +136,12 @@ def finalize(per, names, pcf, dry):
     cons["effective_date"] = pd.to_datetime(cons["effective_date"])
     cur_names = cons.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"].to_dict()
     pcf = pcf.assign(date=pd.to_datetime(pcf["anndate"]))
-    def review_day(d, days):
-        """d 所在月份第三個星期五之後的第一個交易日。"""
-        fr = pd.date_range(d.replace(day=1), periods=31, freq="D"); fr = fr[(fr.month == d.month) & (fr.weekday == 4)][2]
-        return next(x for x in days if x > fr)
-
     rows, report = [], []
     for etf, g in per.groupby("etf"):
+        if etf not in ORIGINAL_START:
+            continue
         days = sorted(pcf.loc[pcf.etf == etf, "date"].unique())
-        pos = {d: i for i, d in enumerate(days)}
-        g = g.sort_values("effective_date").reset_index(drop=True)
-        # 把變動分群：相鄰變動相差 ≤ 5 個交易日為同一群
-        clusters, cl = [], [0]
-        for i in range(1, len(g)):
-            if i > 1 and pos[g.effective_date[i]] - pos[g.effective_date[cl[-1]]] <= 5: cl.append(i)
-            else:
-                if i > 1: clusters.append(cl)
-                cl = [i]
-        clusters.append(cl)
-        periods = [(g.effective_date[0], g.members[0], "PCF 起始（2006-01-02 已在名單）")]
-        for cl in clusters:
-            if cl == [0]: continue
-            start, end = g.effective_date[cl[0]], g.effective_date[cl[-1]]
-            rv = review_day(start, days)
-            if -3 <= pos[rv] - pos[start] <= 2: eff, kind = rv, "定期審核（第三個週五後首個交易日）"
-            else: eff, kind = start, "非定期（依 PCF 首次變動日）"
-            mem = g.members[cl[-1]]
-            periods.append((eff, mem, kind))
+        periods = merge_changes(g, days, "PCF 起始（2006-01-02 已在名單）")
         first_existing = cons.loc[cons.etf == etf, "effective_date"].min()
         exist0 = frozenset(cons.loc[(cons.etf == etf) & (cons.effective_date == first_existing), "stock_id"])
         prev = None
@@ -136,8 +151,7 @@ def finalize(per, names, pcf, dry):
                     report.append(f"{etf} 接點：PCF 在 {first_existing:%Y-%m-%d} 前最後一期 vs 現有第一期 → "
                                   f"PCF 多 {sorted(prev - exist0)}、現有多 {sorted(exist0 - prev)}")
                 break
-            add = sorted(mem - prev) if prev is not None else []; rm = sorted(prev - mem) if prev is not None else []
-            report.append(f"| {etf} | {eff:%Y-%m-%d} | {len(mem)} | {kind} | {'、'.join(s + ' ' + names.get(s, '') for s in add) or '-'} | {'、'.join(s + ' ' + names.get(s, '') for s in rm) or '-'} |")
+            report.append(table_row(etf, eff, mem, kind, prev, names))
             for s in sorted(mem):
                 rows.append({"etf": etf, "effective_date": f"{eff:%Y-%m-%d}", "stock_id": s, "name": cur_names.get(s, names.get(s, ""))})
             prev = mem
@@ -150,8 +164,50 @@ def finalize(per, names, pcf, dry):
           sorted(set(old.stock_id) - set(cons.stock_id)))
 
 
-if __name__ == "__main__":
-    fetch_all()
+LAUNCH = {"0050": "2006-01-02", "0051": "2006-08-31", "0056": "2007-12-20"}
+
+
+def standalone(etf, end, dry):
+    """單獨一檔 ETF 整段由 PCF 重建（上市日 ~ end），寫到 constituents_<etf>.csv 與 constituents_<etf>_notes.md。
+    不併入 constituents.csv：正式版的選股範圍與市場中位數都讀 constituents.csv。"""
+    OUT.mkdir(parents=True, exist_ok=True)
+    jobs = [(etf, d) for d in pd.bdate_range(LAUNCH.get(etf, "2006-01-02"), end)]
+    with ThreadPoolExecutor(4) as ex:
+        for i, _ in enumerate(ex.map(one, jobs)):
+            if i % 500 == 0: print(f"PCF {etf} {i}/{len(jobs)}", flush=True)
     pcf = parse()
+    pcf = pcf[pcf["etf"] == etf]
     per, names = periods(pcf)
-    finalize(per, names, pcf, "--dry-run" in sys.argv)
+    days = sorted(pd.to_datetime(pcf["anndate"]).unique())
+    cons = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str})
+    cur = cons.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"].to_dict()
+    rows, report, prev = [], [], None
+    for eff, mem, kind in merge_changes(per, days, "PCF 起始（上市日）"):
+        report.append(table_row(etf, eff, mem, kind, prev, names))
+        rows += [{"etf": etf, "effective_date": f"{eff:%Y-%m-%d}", "stock_id": s, "name": cur.get(s, names.get(s, ""))}
+                 for s in sorted(mem)]
+        prev = mem
+    out = pd.DataFrame(rows)
+    counts = out.groupby("effective_date").size()
+    print("\n".join(report))
+    print(f"{etf}：{counts.size} 期、{out['stock_id'].nunique()} 檔；每期檔數 {counts.min()}～{counts.max()}")
+    if not dry:
+        out.to_csv(UNI / f"constituents_{etf}.csv", index=False, lineterminator="\n")
+        hdr = "| etf | effective_date | count | type | additions 納入 | deletions 刪除 |\n|---|---|---|---|---|---|\n"
+        (UNI / f"constituents_{etf}_notes.md").write_text(
+            f"# {etf} 歷年成分股（{days[0]:%Y-%m-%d} ~ {days[-1]:%Y-%m-%d}）\n\n"
+            f"由 `build_constituents_pcf.py --etf {etf}` 從元大每日 PCF 重建，方法同 constituents_notes.md「2006-01 ~ 2015 延伸」"
+            f"（每日持股＝實物清單 ∪ 權重清單；缺席 ≤ {GAP} 個交易日補回；分批換股合併到指數生效日）。"
+            f"這份名單沒有逐筆核對指數公告。\n\n{hdr}" + "\n".join(report) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    if "--etf" in sys.argv:
+        etf = sys.argv[sys.argv.index("--etf") + 1]
+        end = sys.argv[sys.argv.index("--end") + 1] if "--end" in sys.argv else pd.Timestamp.today().strftime("%Y-%m-%d")
+        standalone(etf, end, "--dry-run" in sys.argv)
+    else:
+        fetch_all()
+        pcf = parse()
+        per, names = periods(pcf)
+        finalize(per, names, pcf, "--dry-run" in sys.argv)

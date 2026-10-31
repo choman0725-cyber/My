@@ -18,7 +18,7 @@
   - share_events_all.csv：股數變動（分割、配股、減資），引擎用來把 EPS、股利、股價換成同一股數基準再算殖利率。
   - data/TAIEX.csv（回測的交易日曆）：現有日期保留，往前補、往後接 FinMind 的 TAIEX。
 
-股票清單 = constituents.csv 全部 149 檔 + 0050、0056（可加 --extra 補其他代號）。
+股票清單 = constituents.csv（0050／0056 歷年成分股）＋ constituents_*.csv（例如 0051）＋ 0050、0056（可加 --extra 補其他代號）。
 
 用法（需要能連到 api.finmindtrade.com；建議設 token：免費會員 600 次／小時，無 token 300 次／小時）：
     export FINMIND_TOKEN=...                 # 選用
@@ -273,6 +273,10 @@ def main():
     a = ap.parse_args()
 
     cons = pd.read_csv(UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
+    # 其他 ETF 的成分股（例如 constituents_0051.csv）也一起抓；這些檔不影響正式版（正式版只讀 constituents.csv）
+    extra_cons = [pd.read_csv(f, dtype={"stock_id": str, "etf": str}) for f in sorted(UNI.glob("constituents_*.csv"))]
+    if extra_cons:
+        cons = pd.concat([cons] + extra_cons, ignore_index=True)
     names = cons.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"].to_dict()
     names.update({"0050": "元大台灣50", "0056": "元大高股息"})
     ids = list(ETFS) + sorted(cons["stock_id"].unique()) + [s for s in a.extra if s not in names]

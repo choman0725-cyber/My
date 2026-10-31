@@ -666,7 +666,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     if zone is None:
                         continue
                 budget = value_prev / MAX_SLOTS
-                invest = min(cash, budget * first)
+                # 首買比例：預設全域 first；data[sid]["first_frac"]（每日陣列，信心分級用）存在時以訊號日的值為準
+                fr = data[sid]["first_frac"][p] if "first_frac" in data[sid] else first
+                invest = min(cash, budget * fr)
                 if target_util is not None and util_mode == "committed":
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     committed = (value_prev - cash) + reserved
@@ -682,7 +684,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 cash -= invest
-                log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {first:.0%}）")
+                log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）")
                 last_buy_n = n
                 picked += 1
                 if zone:

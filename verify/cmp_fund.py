@@ -11,6 +11,8 @@ def load(ds, sid):
     f = C / f"{ds}_{sid}_{S}_{E}.json"
     return pd.DataFrame(json.loads(f.read_text())['data']) if f.exists() else None
 FUND20 = [s for s in PRICE30 if s not in ('0050','0056')][:20]
+if sys.argv[1:] == ['ALL']:
+    FUND20 = sorted(f[:-4] for f in os.listdir('data/universe/prices') if f[:-4] not in ('0050', '0051', '0056'))
 eps = pd.read_csv(U/'eps_all.csv', dtype={'stock_id': str}); div = pd.read_csv(U/'dividend_all.csv', dtype={'stock_id': str})
 res = pd.read_csv(U/'dividend_result_all.csv', dtype={'stock_id': str})
 rows, issues = [], []
@@ -50,6 +52,6 @@ for sid in FUND20:
         rsf = rs[cols] if len(rs) else pd.DataFrame(columns=cols)
         rows.append(cmp(sid, 'div_result', rsf, res[res.stock_id==sid][cols], ['date'], cols[1:]))
 pd.set_option('display.width', 250)
-o = pd.DataFrame(rows); print(o.to_string()); o.to_csv('data/universe/_verify_cache/task4_summary.csv', index=False)
+o = pd.DataFrame(rows); print(o[(o.fm_only > 0) | (o.db_only > 0) | (o.value_diff > 0) | (o.dup_fm > 0) | (o.dup_db > 0)].to_string()); print(o.groupby('table')[['fm', 'db', 'both', 'fm_only', 'db_only', 'value_diff']].sum().to_string()); o.to_csv('data/universe/_verify_cache/task4_summary.csv', index=False)
 i = pd.DataFrame(issues, columns=['stock_id','table','type','detail']); i.to_csv('data/universe/_verify_cache/task4_issues.csv', index=False); print(i.to_string())
 print('FUND20', FUND20)

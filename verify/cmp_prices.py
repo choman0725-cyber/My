@@ -13,7 +13,10 @@ def load(ds, sid):
 SPLIT = pd.DataFrame(json.loads((C/'TaiwanStockSplitPrice_ALL_2000-01-01_2026-10-31.json').read_text())['data'])
 se = pd.read_csv(U/'share_events_all.csv', dtype={'stock_id': str})
 out_rows, diffs, adj_rows = [], [], []
-for sid in (sys.argv[1:] or PRICE30):
+ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
+if ARGS == ['ALL']:
+    ARGS = sorted(f[:-4] for f in os.listdir('data/universe/prices'))
+for sid in (ARGS or PRICE30):
     raw = load('TaiwanStockPrice', sid)
     if raw is None: continue
     f = pd.read_csv(U/f'prices/{sid}.csv')
@@ -40,7 +43,9 @@ for sid in (sys.argv[1:] or PRICE30):
     out_rows.append(dict(stock_id=sid, fm_rows=len(fm), fm_dup_dates=dupd, file_rows=len(f), both=len(both),
                          fm_only_zero_vol=len(zero), fm_only_other=len(other), file_only=len(f_only), value_diff=nval, open0_fixed=open0,
                          first_fm=fm.date.min(), first_file=f.date.min(), last_fm=fm.date.max(), last_file=f.date.max()))
-    # ---- task 3: independent adj_close ----
+    if '--no-adj' in sys.argv:
+        continue
+    # ---- task 3: independent adj_close（修正前的規則；修正後請用 verify/adj_independent.py）----
     ev = []
     res = load('TaiwanStockDividendResult', sid)
     if res is not None and len(res):
@@ -67,4 +72,6 @@ pd.set_option('display.width', 250)
 o = pd.DataFrame(out_rows); print(o.to_string()); o.to_csv('data/universe/_verify_cache/task2_summary.csv', index=False)
 dd = pd.DataFrame(diffs, columns=['stock_id','date','type','detail']); dd.to_csv('data/universe/_verify_cache/task2_diffs.csv', index=False)
 print(dd.type.value_counts().to_string()); print(dd[~dd.type.str.contains('程式')].to_string())
-a = pd.DataFrame(adj_rows); a.to_csv('data/universe/_verify_cache/task3_adj.csv', index=False); print(a.to_string())
+a = pd.DataFrame(adj_rows)
+if len(a): a.to_csv('data/universe/_verify_cache/task3_adj.csv', index=False)
+if len(a): print(a.to_string())

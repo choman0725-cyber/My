@@ -40,7 +40,8 @@ DEFERS = {"不延後": {}, "B3×Rb": {"defer_breakout": "breakout_B3", "defer_re
 BASE_A = dict(min_yield=5.0, entry="任一", target=0.20, hold_yield=5.0, cap=None, floor=None, first=0.50,
               adds="A -15/-30 加30/20", time_add_days=182, time_add_amount=0.20, max_slots=5, split="不分區",
               stale=True, stale_days=365, stale_loss=-0.30, eps_exit=True, removal=True, defer="不延後",
-              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None, time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all")
+              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None, time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all",
+              profit_years=None)   # 買進濾網：最近 N 個已知完整年度 EPS 全部 > 0（不足 N 年以已知年度計）；None＝不用
 BASE_B = {**BASE_A, "cap": 0.40, "split": "0050區2＋0056區3"}
 BASES = {"底A 第1名Y1不分區": BASE_A, "底B 第2名Y3封頂2+3": BASE_B}
 
@@ -63,11 +64,13 @@ GRID = {
     "eps_exit": [True, False],
     "removal": [True, False],
     "defer": list(DEFERS),
+    "profit_years": [None, 3, 5, 10],
 }
 LABEL = {"min_yield": "買進殖利率門檻%", "entry": "技術買點", "target": "停利門檻", "hold_yield": "續抱殖利率%",
          "cap": "續抱封頂", "floor": "續抱保利回落", "first": "首買比例", "adds": "加碼階梯", "time_add_days": "定期加碼間隔(天)",
          "time_add_amount": "定期加碼額度", "max_slots": "最多檔數", "split": "分區", "stale": "套牢不佔名額",
-         "stale_days": "套牢定義(天)", "stale_loss": "套牢定義(虧損)", "eps_exit": "EPS轉負出場", "removal": "剔除後伺機出場", "defer": "突破延後賣出"}
+         "stale_days": "套牢定義(天)", "stale_loss": "套牢定義(虧損)", "eps_exit": "EPS轉負出場", "removal": "剔除後伺機出場", "defer": "突破延後賣出",
+         "profit_years": "連續N年賺錢"}
 
 G = rs.G
 CONFIGS = {}  # name -> cfg dict
@@ -156,7 +159,7 @@ def apply(cfg):
     ps.MAX_SLOTS, ps.TARGET = cfg["max_slots"], cfg["target"]
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
-    k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), len(G["dates"]))
+    k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
@@ -166,6 +169,8 @@ def apply(cfg):
         for sid, d in G["sub"].items():
             y = d["yield"]
             d["buy"] = sig[sid] & ~np.isnan(thr) & (np.nan_to_num(y, nan=-1) >= thr)
+            if cfg.get("profit_years"):
+                d["buy"] &= ps.profit_years_flag(d.get("annual_eps"), G["dates"], cfg["profit_years"])
             if hy is not None:
                 d["hy_rel"] = hy
         _applied["buy"] = k
@@ -200,14 +205,29 @@ def setup():
         assert ((G["sig"]["任一"][sid] & (np.nan_to_num(y, nan=-1) >= 5.0)) == d["buy"]).all(), sid
 
 
+def paired(df, names, keys, prefix):
+    """與 names[0] 逐情境配對：同一（起始、追加）情境的 IRR 差。回傳 {版本: {prefix配對: '好/平/差', prefix配對中位差, prefix配對最差}}。
+    |差| <= 0.05 點視為持平。配對比標準差更能分辨「結構性改善」與「運氣」：真改善應該多數情境同向。"""
+    base = df[df["版本"] == names[0]].set_index(keys)["IRR"]
+    out = {}
+    for n in names:
+        cur = df[df["版本"] == n].set_index(keys)["IRR"].reindex(base.index)
+        d = (cur - base).dropna().values
+        out[n] = {f"{prefix}配對": f"{int((d > 0.05).sum())}/{int((np.abs(d) <= 0.05).sum())}/{int((d < -0.05).sum())}",
+                  f"{prefix}配對中位差": float(np.median(d)) if len(d) else np.nan,
+                  f"{prefix}配對最差": float(d.min()) if len(d) else np.nan}
+    return out
+
+
 def evaluate(names, tag):
-    """跑樣本內 20 情境 ＋ 後 3 年延續/單獨，回傳彙整表。"""
+    """跑樣本內 20 情境 ＋ 後 3 年延續/單獨，回傳彙整表。
+    另附與 names[0]（基準，通常放正式版或對照組）的逐情境配對統計：好/平/差 的情境數、差距中位數、最差一個情境的差距。"""
     for n in names:
         rs.RULES[n] = to_kw(CONFIGS[n])
     tasks = [(n, CONFIGS[n]["split"], st, c, 0) for n in names for st in rs.STARTS for c in rs.CONTRIBS]
     with Pool(4) as pool:
         res = pool.map(one_is, tasks, chunksize=4)
-    df = pd.DataFrame([dict(版本=t[0], IRR=i, 回撤=m, 最長持有=h, 超過2年=p) for t, i, m, h, p in res])
+    df = pd.DataFrame([dict(版本=t[0], 起始=t[2], 追加=t[3], IRR=i, 回撤=m, 最長持有=h, 超過2年=p) for t, i, m, h, p in res])
     df.to_csv(RESULTS / f"param_opt_{tag}_is_runs.csv", index=False, encoding="utf-8-sig")
     g = df.groupby("版本").agg(前7年=("IRR", "median"), 前7年最差10=("IRR", lambda x: x.quantile(.1)), 前7年標準差=("IRR", "std"),
                            前7年回撤=("回撤", "median"), 最長持有=("最長持有", "max"), 超過2年比例=("超過2年", "mean"))
@@ -216,7 +236,8 @@ def evaluate(names, tag):
         tasks += [(mode, n, CONFIGS[n]["split"], st, c, 0) for n in names for st in starts for c in oos.CONTRIBS]
     with Pool(4) as pool:
         res = pool.map(one_oos, tasks, chunksize=4)
-    do = pd.DataFrame([dict(驗證=t[0], 版本=t[1], IRR=i, 回撤=m) for t, i, m, h in res])
+    do = pd.DataFrame([dict(驗證=t[0], 版本=t[1], 起始=t[3], 追加=t[4], IRR=i, 回撤=m) for t, i, m, h in res])
+    do.to_csv(RESULTS / f"param_opt_{tag}_oos_runs.csv", index=False, encoding="utf-8-sig")
     go = do.groupby(["驗證", "版本"]).agg(中位=("IRR", "median"), 最差10=("IRR", lambda x: x.quantile(.1)), 標準差=("IRR", "std"))
     m = g.copy()
     for mode in ("延續", "單獨"):
@@ -225,10 +246,16 @@ def evaluate(names, tag):
     m["三段平均"] = m[["前7年", "延續", "單獨"]].mean(axis=1)
     m["最差10最小"] = m[["前7年最差10", "延續最差10", "單獨最差10"]].min(axis=1)
     m["標準差平均"] = m[["前7年標準差", "延續標準差", "單獨標準差"]].mean(axis=1)
+    p_is = paired(df, names, ["起始", "追加"], "前7年")
+    p_oos = paired(do, names, ["驗證", "起始", "追加"], "後3年")
+    for n in names:
+        for k_, v in {**p_is[n], **p_oos[n]}.items():
+            m.loc[n, k_] = v
     return m
 
 
 SHOW = ["前7年", "前7年最差10", "前7年標準差", "樣本內分數", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "最長持有"]
+SHOW_PAIR = ["前7年配對", "前7年配對中位差", "前7年配對最差", "後3年配對", "後3年配對中位差", "後3年配對最差"]   # 相對 names[0]
 
 
 def stage1():

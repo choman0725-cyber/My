@@ -691,6 +691,8 @@ def attach_fundamentals(data, dates):
             ttm = pd.Series(e["eps"].rolling(4).sum().values, index=e["published"]).groupby(level=0).last()
             loss = (ttm < 0).reindex(dates.union(ttm.index)).ffill().reindex(dates).fillna(False).astype(bool).values
         d["eps_loss"] = loss
+        annual = e.groupby("fy")["eps"].agg(["sum", "size"]) if len(e) else pd.DataFrame(columns=["sum", "size"])
+        d["annual_eps"] = annual[annual["size"] == 4]["sum"]      # 完整四季的年度 EPS（fy → 合計），profit_years_flag 用
         px = d["df"].dropna(subset=["open", "close"])
         t = pv_triggers(px)
         d["tech_sell"] = (t["wick_sell"] | t["pv_sell"]).reindex(dates).fillna(False).astype(bool).values
@@ -712,6 +714,23 @@ def attach_fundamentals(data, dates):
         d["near_near1"] = rx((y >= 5.0) & ((k < 30) | (r < 35) | (c <= lower * 1.03)))
         d["near_near2"] = rx((y >= 4.5) & ((k < 40) | (r < 40) | (c <= lower * 1.05)))
     return data
+
+
+def profit_years_flag(annual, dates, n):
+    """每日布林：最近 n 個「已知完整會計年度」的年度 EPS 全部 > 0（不足 n 年以已知年度計，至少 1 年）。
+    年度 EPS 在隔年 3/31（Q4 法定公布期限）後才視為已知。annual 為 attach_fundamentals 存的 d["annual_eps"]。"""
+    flag = np.zeros(len(dates), bool)
+    if annual is None or len(annual) == 0:
+        return flag
+    fys = sorted(annual.index)
+    bounds = [pd.Timestamp(int(fy) + 1, 3, 31) for fy in fys]
+    for i, b in enumerate(bounds):
+        known = fys[: i + 1][-n:]
+        ok = all(annual[fy] > 0 for fy in known)
+        start = dates.searchsorted(b)
+        end = dates.searchsorted(bounds[i + 1]) if i + 1 < len(bounds) else len(dates)
+        flag[start:end] = ok
+    return flag
 
 
 def stats(equity):

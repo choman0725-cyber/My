@@ -243,6 +243,8 @@ def certify(sids, dates, t, thr, kw, names, s_n):
             continue
         d = build(sid, dates, t)
         buy = d["sig"][po.ENTRIES[dr.FINAL["entry"]]] & ~np.isnan(thr) & (np.nan_to_num(d["yield"], nan=-1) >= thr)
+        if dr.FINAL.get("profit_years"):
+            buy &= ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"])
         d["buy"] = buy
         member = pd.Series(True, index=dates)
         y = yield_metrics(d, thr, s_n)

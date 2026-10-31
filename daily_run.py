@@ -21,12 +21,14 @@ import portfolio_study as ps
 import robust_study as rs
 from backtest import ROOT, SELL_COST
 
-FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0)}
+FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0), "profit_years": 5}
 # mkt=(範圍, k, 續抱k, 下限)：買進門檻＝max(當天全部 0050＋0056 成分股預估殖利率中位數 ＋ k×σ, 下限)；續抱 k=None 表示續抱維持固定 hold_yield
+# profit_years=5：買進時最近 5 個已知完整會計年度（Q4 於隔年 3/31 後視為已知）年度 EPS 全部 > 0；上市不滿 5 年以已知年度計
 RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣都隔天開盤）
   選股：當天屬於 0050 或 0056 成分股的電子股（排除電信、川湖）
   買進：預估殖利率 >= max(當天全部 0050＋0056 成分股預估殖利率的中位數, 5%)
         （預估股利＝近四季 EPS × 近 3 年平均配息率；年配且已公告未除息用公告值）
+        且公司最近 5 個已知完整年度每年 EPS 都 > 0（不足 5 年以已知年度計）
         且技術買點任一：多指標超賣共振／爆量長下影線或爆量長紅／布林下軌＋KD 低檔金叉／低檔區＋價量
         同日多檔依殖利率高到低挑；每檔額度＝當時總資產 ÷ 5，首買額度 50%
   加碼：收盤曾跌到首買價 -15% / -30% 後，出現爆量下影線或長紅且收盤仍低於首買價，加碼額度 30% / 20%
@@ -154,14 +156,15 @@ def main():
         print(f"注意：{', '.join(stale)} 在 {last.date()} 沒有報價資料，引擎會等資料補齊後才判斷賣出／加碼。")
     print(f"執行後現金約 {cash1 * a.capital / 1e4:,.0f} 萬")
 
-    print(f"\n【觀察名單：殖利率 >= 買進門檻 {thr[p]:.2f}% 且在成分股內、未持有（等技術買點）】")
+    print(f"\n【觀察名單：殖利率 >= 買進門檻 {thr[p]:.2f}% 且在成分股內、未持有（等技術買點；「近5年有虧損」的不會買）】")
     watch = []
     for sid, d in G["sub"].items():
         y = d["yield"][p]
         if sid in pos0 or np.isnan(y) or y < thr[p] or not G["member"][sid].iloc[p]:
             continue
+        ok = ps.profit_years_flag(d.get("annual_eps"), dates, FINAL["profit_years"])[p] if FINAL.get("profit_years") else True
         watch.append(dict(代號=sid, 名稱=names.get(sid, ""), 收盤=d["close_ff"][p], 預估殖利率=round(y, 2),
-                          今日買訊="是" if d["buy"][p] else "", 接近買點="是" if d["near_near1"][p] else ""))
+                          近5年有虧損="" if ok else "是", 今日買訊="是" if d["buy"][p] else "", 接近買點="是" if d["near_near1"][p] else ""))
     w = pd.DataFrame(watch).sort_values("預估殖利率", ascending=False) if watch else pd.DataFrame()
     with pd.option_context("display.width", 300, "display.unicode.east_asian_width", True):
         print(w.to_string(index=False) if len(w) else "（無）")

@@ -73,12 +73,12 @@ def setup():
     si.S.update(dates=dates, N=len(dates))
 
 
-def simulate(L, mode="idle", size=0.20, reserve=0.10, shrink=True, min_frac=0.25, max_short=ss.SLOTS):
+def simulate(L, mode="idle", size=0.20, reserve=0.10, shrink=True, min_frac=0.25, max_short=ss.SLOTS, share_slots=False):
     """mode separate：放空帳戶自有資金 1.0（=CAPITAL），名目＝權益/5，與 short_strategy.py 相同。
     mode idle：名目＝前一日多頭總資產 × size，受多頭閒置現金限制。回傳 (逐筆, 合併資產曲線, 放空損益曲線)。"""
     dates, A, bear = S["dates"], S["A"], S["bear"]
     N = len(dates); s_n = L["s_n"]
-    eq_long, cash_long, held_long = L["eq"], L["cash"], L["held"]
+    eq_long, cash_long, held_long, occ_long = L["eq"], L["cash"], L["held"], L.get("occ", np.zeros(N, int))
     pos, trades = {}, []
     realized, locked = 0.0, 0.0
     comb = np.full(N, np.nan); short_curve = np.full(N, np.nan)
@@ -116,6 +116,10 @@ def simulate(L, mode="idle", size=0.20, reserve=0.10, shrink=True, min_frac=0.25
                 worst = min(pos, key=lambda q: 1 - A[q]["close_ff"][p_] / pos[q]["p0"])
                 a = A[worst]
                 cover(worst, n, a["open"][n] if not np.isnan(a["open"][n]) else a["close_ff"][p_], "多頭要用錢")
+            while share_slots and pos and occ_long[n] + len(pos) > ss.SLOTS:
+                worst = min(pos, key=lambda q: 1 - A[q]["close_ff"][p_] / pos[q]["p0"])
+                a = A[worst]
+                cover(worst, n, a["open"][n] if not np.isnan(a["open"][n]) else a["close_ff"][p_], "多頭要用名額")
         # 3. 新放空
         cands = []
         for sid, a in A.items():
@@ -127,6 +131,8 @@ def simulate(L, mode="idle", size=0.20, reserve=0.10, shrink=True, min_frac=0.25
                 continue
             cands.append((a["yield"][p_], sid))
         free = min(max_short, ss.SLOTS) - len(pos)
+        if share_slots and mode == "idle":
+            free = min(free, ss.SLOTS - occ_long[n] - len(pos))
         avail = cash_long[n] + realized + mtm_prev - reserve * assets_p - locked
         for _, sid in sorted(cands)[:max(0, free)]:
             a = A[sid]
@@ -192,6 +198,7 @@ def metrics(L, T, comb):
             "放空總損益萬": T["損益"].sum() * CAPITAL / 1e4 if len(T) else 0.0,
             "前7年放空損益萬": yr[yr.index <= 2023].sum() if len(yr) else 0.0, "後3年放空損益萬": yr[yr.index >= 2024].sum() if len(yr) else 0.0,
             "多頭要用錢筆數": int((T["原因"] == "多頭要用錢").sum()) if len(T) else 0,
+            "多頭要用名額筆數": int((T["原因"] == "多頭要用名額").sum()) if len(T) else 0,
             "強制回補": int((T["原因"] == "強制回補").sum()) if len(T) else 0, "斷頭": int((T["原因"] == "斷頭").sum()) if len(T) else 0,
             "期末萬": comb.iloc[-1] * CAPITAL / 1e4, "純多期末萬": long_eq.iloc[-1] * CAPITAL / 1e4,
             "IRR": seg(comb, len(dates) - 1), "純多IRR": seg(long_eq, len(dates) - 1),

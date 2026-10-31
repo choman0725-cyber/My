@@ -158,9 +158,30 @@ def long_path(start="2017-01-03", contrib_sched=None):
     for n in range(s_n + 1, N):
         if np.isnan(cash[n]):
             cash[n] = cash[n - 1]; held[n] = held[n - 1]; count[n] = count[n - 1]
+    # 佔名額的多頭檔數：從對帳單重建部位（買進／加碼／賣出），依 FINAL_RULES 的名額定義逐日計算
+    occ = np.zeros(N, int)
+    pos = {}
+    by_day = {n: g for n, g in L.groupby("n")} if len(L) else {}
+    for n in range(s_n, N):
+        for _, r in (by_day[n].iterrows() if n in by_day else []):
+            sid, act = r["代號"], r["動作"]
+            if act == "買進":
+                pos[sid] = {"start": n, "shares": r["股數"], "cost": r["金額"]}
+            elif act == "加碼" and sid in pos:
+                pos[sid]["shares"] += r["股數"]; pos[sid]["cost"] += r["金額"]
+            elif act == "賣出":
+                pos.pop(sid, None)
+        k = 0
+        for sid, q in pos.items():
+            d = G["sub"][sid]
+            px = d["close_ff"][n]
+            stale = (dates[n] - dates[q["start"]]).days > ps.STALE_DAYS or px / (q["cost"] / q["shares"]) - 1 < ps.STALE_LOSS
+            removed = not G["member"][sid].values[n]
+            k += 0 if (stale or removed) else 1
+        occ[n] = k
     eq_arr = np.full(N, np.nan); eq_arr[s_n:] = eq.values
     flows = [CAPITAL] + list(sched.values()); flow_dates = [dates[s_n]] + [dates[first_day[y]] for y in sched]
-    return dict(s_n=s_n, eq=eq_arr, cash=cash, count=count, held=held, trades=tr, contrib=contrib or {},
+    return dict(s_n=s_n, eq=eq_arr, cash=cash, count=count, held=held, occ=occ, trades=tr, contrib=contrib or {},
                 flows=flows, flow_dates=flow_dates)
 
 

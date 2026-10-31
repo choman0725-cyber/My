@@ -60,6 +60,8 @@
 
 ## 五、相關檔案
 
+- 交接文件（整個 repo 的結構、操作、資料更新、決策脈絡）：`HANDOFF.md`
+
 - 引擎：`portfolio_study.py`（`run()`）、`param_opt.py`（參數→引擎設定、`BASE_A`）
 - 每日執行：`daily_run.py`
 - 做空：純技術放空不做（`SHORT_STUDY.md`）；對沖用放空規則見 `SHORT_RULES.md`（殖利率 <2%＋空頭排列＋停利 5%，正式程式 `short_strategy.py`）

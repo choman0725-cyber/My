@@ -3,8 +3,9 @@
 
 用法：
   python reopt_study.py            # 第一階段：逐一掃描，寫 results/reopt_stage1.csv
-  python reopt_study.py combo      # 第二階段：把第一階段通過的改善逐項疊加（貪婪），寫 results/reopt_combo.csv
-通過標準（和過去一樣）：三段平均上升、最差 10% 不降、標準差不升、前 7 年配對好 ≥ 差。
+  python reopt_study.py combo strict    # 第二階段：第一階段通過的改善逐項疊加（貪婪），寫 results/reopt_combo_strict.csv
+  python reopt_study.py combo relaxed   # 放寬版：標準差改為絕對上限 2.5，配對要求更嚴（前 7 年好 ≥ 2×差、後 3 年好 ≥ 差）
+嚴格標準（和過去一樣）：三段平均上升、最差 10% 不降、標準差不升（+0.2 內）、前 7 年配對好 ≥ 差。
 """
 import sys
 
@@ -55,11 +56,23 @@ def etf_benchmark():
     return pd.DataFrame(rows).T
 
 
+MODE = "strict"   # strict：原本的四條；relaxed：標準差改為絕對上限 2.5，但配對要求更嚴（前 7 年好 ≥ 2×差、後 3 年好 ≥ 差）
+
+
 def passes(row, base):
-    checks = {"三段平均升": row["三段平均"] > base["三段平均"] + 0.05,
-              "最差10不降": row["最差10最小"] >= base["最差10最小"] - 0.3,
-              "標準差不升": row["標準差平均"] <= base["標準差平均"] + 0.2,
-              "配對好≥差": int(row["前7年配對"].split("/")[0]) >= int(row["前7年配對"].split("/")[2])}
+    g, _, b = (int(x) for x in row["前7年配對"].split("/"))
+    g3, _, b3 = (int(x) for x in row["後3年配對"].split("/"))
+    if MODE == "strict":
+        checks = {"三段平均升": row["三段平均"] > base["三段平均"] + 0.05,
+                  "最差10不降": row["最差10最小"] >= base["最差10最小"] - 0.3,
+                  "標準差不升": row["標準差平均"] <= base["標準差平均"] + 0.2,
+                  "配對好≥差": g >= b}
+    else:
+        checks = {"三段平均升≥0.3": row["三段平均"] > base["三段平均"] + 0.3,
+                  "最差10不降": row["最差10最小"] >= base["最差10最小"] - 0.3,
+                  "標準差≤2.5": row["標準差平均"] <= 2.5,
+                  "前7年配對好≥2×差": g >= 2 * b and g > b,
+                  "後3年配對好≥差": g3 >= b3}
     return all(checks.values()), "、".join(k for k, v in checks.items() if not v)
 
 
@@ -93,7 +106,13 @@ def stage1():
 
 def combo():
     s1 = pd.read_csv(RESULTS / "reopt_stage1.csv", index_col=0)
+    s1 = s1[s1["參數"].notna() & (s1.index != "正式版")]
+    base = s1.loc[s1.index[0]].copy()   # 佔位，下面用正式版列
+    full = pd.read_csv(RESULTS / "reopt_stage1.csv", index_col=0)
+    base = full.loc["正式版"]
+    s1["通過"] = [passes(s1.loc[n], base)[0] for n in s1.index]
     ok = s1[s1["通過"] == True].sort_values("三段平均", ascending=False)
+    print(f"模式 {MODE}：第一階段通過 {len(ok)} 項：{list(ok.index)}", flush=True)
     po.setup()
     cur, cur_name = dict(BASE), "正式版"
     po.CONFIGS[cur_name] = cur
@@ -115,9 +134,13 @@ def combo():
         if ok_:
             cur, cur_name = cand, cand_name
     h = pd.DataFrame(history, columns=["改動", "參數鍵", "值", "採用", "未過項目", "三段平均", "最差10最小", "標準差平均", "前7年配對"])
-    h.round(3).to_csv(RESULTS / "reopt_combo.csv", index=False, encoding="utf-8-sig")
+    h.round(3).to_csv(RESULTS / f"reopt_combo_{MODE}.csv", index=False, encoding="utf-8-sig")
     print("\n最終設定：", {k: v for k, v in cur.items() if BASE.get(k) != v} or "與正式版相同")
 
 
 if __name__ == "__main__":
-    combo() if len(sys.argv) > 1 and sys.argv[1] == "combo" else stage1()
+    if len(sys.argv) > 1 and sys.argv[1] == "combo":
+        MODE = sys.argv[2] if len(sys.argv) > 2 else "strict"
+        combo()
+    else:
+        stage1()

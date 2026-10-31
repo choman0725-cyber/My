@@ -36,8 +36,9 @@ python ledger_report.py [--capital --start --contrib]
 
 ### 更新資料
 1. 更新 `data/universe/prices/*.csv`（含 adj_close）、`eps_all.csv`、`dividend_all.csv`、`dividend_result_all.csv`、`constituents.csv`，全部抓到**同一天**（目前部分個股只到 10-28，會讓最後一天的中位數檔數變少）。
-2. `python portfolio_electronics.py` 重建快取 `results/portfolio_prepared.pkl`（含 149 檔的殖利率序列）。
-3. 刪掉 `results/param_opt_sigs.pkl`（技術訊號快取）讓它重算。
+2. 刪掉 `results/portfolio_prepared.pkl`，再 `python portfolio_electronics.py` 重建（含 149 檔的殖利率序列；約 3 分鐘建快取＋7 分鐘跑它附帶的回測）。**這個 pkl 被 .gitignore 排除、不在 git 裡**，新環境第一次跑時也要這樣重建；只想建快取不跑回測可用：
+   `python -c "import pickle,pandas as pd,portfolio_study as ps;from backtest import RESULTS,ROOT;cons=pd.read_csv(ps.UNI/'constituents.csv',dtype={'stock_id':str,'etf':str});cal=pd.read_csv(ROOT/'data'/'TAIEX.csv',parse_dates=['date'])['date'];dates=pd.DatetimeIndex(cal[cal>=ps.START-pd.Timedelta(days=5)]).sort_values();(RESULTS/'portfolio_prepared.pkl').write_bytes(pickle.dumps(ps.prepare(sorted(cons['stock_id'].unique()),dates)))"`
+3. 刪掉 `results/param_opt_sigs.pkl`（技術訊號快取，這個有進 git）讓它重算。
 4. 再跑 `daily_run.py`。
 
 資料來源與細節：`data/universe/README.md`、`constituents_notes.md`。資料是由使用者本機的 FinMind 抓的（雲端環境連不到金融網站），用 `fetch_data.py`／另一個工作階段產生。
@@ -149,6 +150,7 @@ python ledger_report.py [--capital --start --contrib]
 - **空交易表**：OOS 單獨段可能一筆交易都沒有，`oos_study.one()` 已處理；新增統計時留意空 DataFrame。
 - **settle 月數 >12** 曾因用月份取模而退化成每年一次，現已改用起跑日累加；新增週期性規則時要驗證觸發日期。
 - **資料最後一天不齊**：部分個股價格只到 10-28，最後一天市場中位數只剩 30 檔；每日程式會提示「最新一天無報價，引擎暫不處理」。
+- **`results/portfolio_prepared.pkl` 不在 git 裡**（.gitignore 的 `results*/portfolio_prepared.pkl`）：新 checkout 沒有它，所有讀它的腳本（`robust_study`、`param_opt`、`daily_run`、`portfolio_contrib`、`market_median_study`）都會失敗；先依第 3 節重建。2026-10-31 以前 `portfolio_electronics.py` 建完快取不會存檔，已修正。
 - **多個分支**：repo 上有四條分支（見 11.4），FINAL_RULES.md 內容不同；做多正式版以 `ccr-fca953fb-497q7h` 為準。
 - **−30% 相對平均成本幾乎不會發生**（因為 −15/−30% 的加碼把成本拉低），任何以它為前提的規則等於不會觸發。
 - 參數「單獨有效」不等於「疊加有效」：停利 10% 與續抱 4.5% 各自有效，合起來反而差。每次只改一項。

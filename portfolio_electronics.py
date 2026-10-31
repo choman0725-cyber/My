@@ -51,7 +51,11 @@ def main():
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
     cache = RESULTS / "portfolio_prepared.pkl"
-    data, _ = pickle.loads(cache.read_bytes()) if cache.exists() else ps.prepare(sorted(cons["stock_id"].unique()), dates)
+    if cache.exists():
+        data, _ = pickle.loads(cache.read_bytes())
+    else:
+        data, skipped = ps.prepare(sorted(cons["stock_id"].unique()), dates)
+        cache.write_bytes(pickle.dumps((data, skipped)))   # 快取不進 git（.gitignore），新環境第一次跑會在這裡重建
     ps.attach_fundamentals(data, dates)
 
     raw_last = {sid: pd.read_csv(ps.UNI / "prices" / f"{sid}.csv")["close"].iloc[-1] for sid in ELECTRONICS

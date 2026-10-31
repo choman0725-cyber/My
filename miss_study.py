@@ -99,7 +99,7 @@ def flags(ev, dates, est_key, kind, tol, cut_tol=0.0):
     for sid, g in e[hit].groupby("代號"):
         f = np.zeros(len(dates), bool)
         for _, r in g.iterrows():
-            f |= ((dates >= r["公告"]) & (dates < r["除息"])).values
+            f |= np.asarray((dates >= r["公告"]) & (dates < r["除息"]))
         out[sid] = f
     return out
 

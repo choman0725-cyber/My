@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 results*/portfolio_prepared.pkl
 results*/short_prepared.pkl
+results*/short_strategy_prepared.pkl

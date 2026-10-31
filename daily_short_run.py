@@ -1,11 +1,11 @@
-"""放空規則每日執行程式：殖利率 <1.5%（或 --yield 2）＋ 大盤空頭排列 ＋ 指數對月線乖離 −10%～+1% ＋ 技術放空點；
+"""放空規則每日執行程式（研究引擎版，供與正式程式 short_strategy.py 交叉核對）：殖利率 <2%（或 --yield 1.5）＋ 大盤空頭排列 ＋ 指數對月線乖離 −10%～+1% ＋ 技術放空點；
 獲利 5% 回補，大盤轉多且獲利 ≥2% 連續兩個收盤也回補；距最後回補日不足 30 天不空；最多 5 檔（規則見 SHORT_RULES.md）。
 
 做法：用規則從 2017-01 把歷史重跑到最新資料日，得到目前應有的空單，再依最新收盤判斷明天開盤要做的事。
 用法：
   python daily_short_run.py                       # 500 萬
   python daily_short_run.py --capital 3000000
-  python daily_short_run.py --yield 2                 # 殖利率門檻改 2%
+  python daily_short_run.py --yield 1.5               # 保守版
   python daily_short_run.py --asof 2025-03-31     # 假裝今天是這一天
 資料更新：data/universe/prices/*.csv、eps_all.csv、dividend_all.csv 更新後，先刪掉 results/short_prepared.pkl 再執行。
 """
@@ -33,7 +33,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capital", type=float, default=5_000_000)
     ap.add_argument("--asof", default=None)
-    ap.add_argument("--yield", dest="yield_th", type=float, default=1.5, help="殖利率門檻（%%），1.5 或 2")
+    ap.add_argument("--yield", dest="yield_th", type=float, default=2.0, help="殖利率門檻（%%），2（正式）或 1.5（保守）")
     a = ap.parse_args()
     YIELD_TH = a.yield_th
 

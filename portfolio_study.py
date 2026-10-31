@@ -183,7 +183,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
         tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
-        time_add_base="budget", deep_add_base="budget"):
+        time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -214,6 +214,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       hold_yield_cap：獲利達 cap 就不看殖利率直接賣（封頂）。
     time_add_trap：定期加碼改成「套牢後才啟動」——收盤低於平均成本 30% 以上才開始計時（回到 -30% 以內就歸零重算），
       連續套牢每滿 time_add_days 天、出現加碼訊號且收盤低於平均成本，才多一次加碼（額度 × time_add_amount）。
+    rest：長度＝dates 的布林陣列，True＝「休息期」：前一天為休息期時，隔天開盤把所有部位出清（不補、不加碼），
+      休息期內不新買；休息期結束後照規則伺機重新建倉。
+    rest_gain：組合自上次全面出清（或起跑）以來總資產漲幅達此比例（例如 0.5＝+50%）時，隔天開盤全部出清，
+      之後立刻照規則重新建倉。
     time_add_base / deep_add_base：加碼金額的計算基準。"budget"＝進場時的額度（總資產÷5，固定不變，預設）；
       "assets"＝加碼當天的總資產÷5；"position"＝加碼當天該部位的市值。再乘上 time_add_amount 或 ADDS 的比例。
     trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
@@ -349,6 +353,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 positions.pop(sid)
 
     realized = [0.0]   # 本結算期已實現損益（settle 補虧模式用）
+    rest_base = [1.0]  # 上次全面出清後的總資產（rest_gain 用）
+    next_settle = [dates[max(start_n, 1)] + pd.DateOffset(months=settle[0])] if settle and settle[0] > 12 else [None]
 
     def log(n, sid, action, price, shares_delta, amount, note=""):
         if ledger is None:
@@ -378,6 +384,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         p = n - 1
         if contributions and n in contributions:
             cash += contributions[n]
+            rest_base[0] += contributions[n]
             log(n, "", "追加資金", np.nan, 0.0, contributions[n])
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
@@ -393,7 +400,23 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         has_cand = (not need_candidate) or any(
             data[s_]["buy"][p] and mem.get(s_, no)[p] and s_ not in positions and not np.isnan(data[s_]["open"][n])
             for s_ in data)
-        if settle and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
+        resting = rest is not None and bool(rest[p])
+        if resting or (rest_gain is not None and value_prev / rest_base[0] - 1 >= rest_gain):
+            for s_ in list(positions):
+                o_ = data[s_]["open"][n]
+                if not np.isnan(o_):
+                    close_out(s_, n, o_, "全面休息出清" if resting else f"組合獲利達{rest_gain:.0%}全面出清")
+                    sold_today.add(s_)
+            if not positions:
+                rest_base[0] = cash
+        settle_today = False
+        if settle:
+            if settle[0] <= 12:
+                settle_today = (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month
+            elif dates[n] >= next_settle[0]:     # 超過一年的週期：從起跑日起算
+                settle_today = True
+                next_settle[0] = next_settle[0] + pd.DateOffset(months=settle[0])
+        if settle_today:
             if settle[1].startswith("offset"):
                 # 補虧結算：先賣有賺的（offset_target 只賣達停利門檻的），再用本期累計已實現獲利去認列虧損部位，
                 # 虧損由小到大（offset_big：由大到小）逐檔檢查，認列後本期合計仍 >= 0 才賣；其餘續抱。
@@ -424,7 +447,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             o, c_prev = d["open"][n], d["close"][p]
             if np.isnan(o) or np.isnan(c_prev):
                 continue
-            if settle and not settle[1].startswith("offset") and (dates[n].month - 1) % settle[0] == 0 and dates[p].month != dates[n].month:
+            if settle_today and not settle[1].startswith("offset"):
                 g_ = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1
                 if settle[1] == "all" or (settle[1] == "profit" and g_ > 0) or (settle[1] == "target" and g_ >= TARGET):
                     close_out(sid, n, o, f"定期結算({settle[0]}個月)")
@@ -572,6 +595,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     used[q["zone"]] += 1
             zone_free = {z: cap - used[z] for z, (cap, _) in slot_split.items()}
             free = sum(max(v, 0) for v in zone_free.values())
+        if resting:
+            free = 0
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0
         if free > 0:

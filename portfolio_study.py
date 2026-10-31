@@ -607,8 +607,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 if kind == "position":
                     return pos["shares"] * c_prev
                 return pos["budget"]
-            if due:
-                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), add_base(time_add_base) * time_add_amount))
+            # 加碼倍數：data[sid]["add_mult"]（每日陣列，信心分級用）存在時，加碼金額乘上訊號日的倍數；0＝不加
+            amult = d["add_mult"][p] if "add_mult" in d else 1.0
+            if due and amult > 0:
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), add_base(time_add_base) * time_add_amount * amult))
                 if invest > 0:
                     pos["shares"] += invest * (1 - BUY_COST) / o
                     pos["cost"] += invest
@@ -620,8 +622,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     cash -= invest
                     log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"定期加碼第{pos['time_adds']}次（持有滿{time_add_days}天仍虧損）")
                     continue
-            if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"]:
-                invest = add_base(deep_add_base) * ADDS[pos["adds"]]
+            if pos["adds"] < pos["hit"] and d["add"][p] and c_prev < pos["first"] and amult > 0:
+                invest = add_base(deep_add_base) * ADDS[pos["adds"]] * amult
                 if idle_cash and len(positions) >= MAX_SLOTS:
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
                     invest += max(cash - reserved, 0) / len(positions)

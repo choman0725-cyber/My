@@ -197,12 +197,12 @@ python ledger_report.py [--capital --start --contrib]
 - 本 session 因早期取得「觸及使用者其他 session」授權，之後只接受信任裝置的請求，其他雲端 session 讀不到它；這是交接到新 session 的原因。**新 session 請不要申請該授權**，否則會有同樣限制。
 - 資料是使用者本機 session「專案交接與設定」（session_01VJgQ5eCEF74TEYsNijD87o）用 FinMind 抓的，雲端連不到金融網站；要更新資料請使用者在本機跑，或請該 session 幫忙，成品以 Artifact 交付再用 Artifact 工具讀取。
 
-### 11.5 目前狀態（2026-10-31 接手 session 更新）
+### 11.5 目前狀態（2026-10-31 接手 session 更新，資料修正後）
 - 工作目錄乾淨，所有結果已 commit／push。
-- 使用者最後兩個決定：①股票池不擴大（非電子成分股全部測過都變差）；②採用「連續 5 年賺錢」買進濾網，`param_opt.evaluate()` 加配對統計。
-- 環境驗證指令與預期值（接手時先跑）：
-  `python daily_run.py` → 資料最後日期 2026-10-29、總資產 4,247 萬、持股 7 檔、沒有動作；
-  `python -c "import pandas as pd, param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps; po.setup(); G=rs.G; d=G['dates']; po.apply(dr.FINAL); kw=po.to_kw(dr.FINAL); [print(d[s].date(), round(ps.run(G['sub'],G['member'],d,capital=5e6,start_n=s,**kw)[1].iloc[-1]*500)) for s in (1, d.get_indexer([pd.Timestamp('2017-01-03')],method='bfill')[0])]"` → 2016-12-28 4870、2017-01-03 4247。
-  `results/portfolio_prepared.pkl` 不在 git 裡，沒有的話先照第 3 節重建。
+- 使用者最近的決定：①股票池不擴大；②採用「連續 5 年賺錢」買進濾網；③資料修正後規則維持不變（選「A」），首買 0.8 為備案 C。
+- 環境驗證指令與預期值（接手時先跑；`results/portfolio_prepared.pkl` 不在 git 裡，沒有的話先照第 3 節重建）：
+  `python daily_run.py` → 資料最後日期 2026-10-30、總資產 2,512 萬（現金 364 萬）、持股 7 檔（群光、瑞儀、神基、廣達、華碩、宏碁、大聯大）、沒有動作、觀察名單文曄／技嘉／聯強／可成；
+  `python -c "import pandas as pd, param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps; po.setup(); G=rs.G; d=G['dates']; po.apply(dr.FINAL); kw=po.to_kw(dr.FINAL); [print(d[s].date(), round(ps.run(G['sub'],G['member'],d,capital=5e6,start_n=s,**kw)[1].iloc[-1]*500)) for s in (1, d.get_indexer([pd.Timestamp('2017-01-03')],method='bfill')[0])]"` → 2016-12-28 2595、2017-01-03 2512。
+- `stock_fit.py` 的池內對照基準（`results/stock_fit_pool.csv`）已在修正後資料重算；`stock_fit_nonelec*`、`stock_screen_*`、`profit_years_*`、`final_profit5_*` 等研究結果檔仍是舊資料，結論方向可參考、數字不要引用。
 - 沒有未完成的計算；沒有待回覆的問題。
 - 可能的後續（使用者尚未要求）：每日程式「從實際持股起算」模式；三條分支合併（以本分支為主線）；資料自動更新。

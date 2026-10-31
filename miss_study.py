@@ -7,7 +7,7 @@
   符合預期或更好：不做任何事，照原本的續抱條件（獲利 ≥ 12% 且推估殖利率 < 4.75% 才賣）。
   半年配、季配的股票沒有「一年一次公告 vs 年度推估」的對應關係，不做對照。
 另測一組用「下一年推估」（近四季 EPS × (1＋近 2 季營收年增) × 利潤率係數，yield_variant_study 的 H5）當預期值。
-用法：python miss_study.py [main|ext|ext2|cut]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
+用法：python miss_study.py [main|ext|ext2|cut|edge]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
 """
 import pickle
 
@@ -51,7 +51,10 @@ for ct in (0.0, 0.10, 0.20):
 for tol in (0.10, 0.20):
     CUT[f"正式版殖利率＋低於推估{tol:.0%}且低於去年→伺機出場"] = dict(est="A", miss=(tol, "tech_profit"), kind="both")
 CUT["正式版殖利率＋砍股利10%以上→隔天賣"] = dict(est="A", miss=(0.0, "immediate"), kind="cut", cut_tol=0.10)
-SETS = {"main": VARIANTS, "ext": EXT, "ext2": EXT2, "cut": CUT}
+# 第五輪（python miss_study.py edge）：20% 的敏感度檢查，19% 會多抓到緯穎 2026 那次 −19.88%
+EDGE = {"正式版（已公告用公告值）": dict(est="A", miss=None),
+        "正式版殖利率＋低於預期19%→伺機出場": dict(est="A", miss=(0.19, "tech_profit"))}
+SETS = {"main": VARIANTS, "ext": EXT, "ext2": EXT2, "cut": CUT, "edge": EDGE}
 
 
 def build(data, dates):

@@ -293,9 +293,10 @@ def paired_from_files(base_tag, cur_tag):
 
 
 def keep_verdict(row, base):
-    """留池判定：三段平均不降（≥ −0.1）、標準差不升（≤ +0.1）、最差 10% 不降（≥ −0.3）、前 7 年配對好 ≥ 差。"""
+    """留池判定：三段平均不降（≥ −0.1）、標準差不升（≤ +0.2，20 個樣本的標準差本身誤差約 0.3，0.1～0.2 視為雜訊）、
+    最差 10% 不降（≥ −0.3）、前 7 年配對好 ≥ 差。"""
     checks = {"三段平均不降": row["三段平均"] - base["三段平均"] >= -0.1,
-              "標準差不升": row["標準差平均"] - base["標準差平均"] <= 0.1,
+              "標準差不升": row["標準差平均"] - base["標準差平均"] <= 0.2,
               "最差10不降": row["最差10最小"] - base["最差10最小"] >= -0.3,
               "配對好≥差": row.get("前7年好減差", 0) >= 0}
     return ("可留池" if all(checks.values()) else "不留池"), "、".join(k for k, v in checks.items() if not v)
@@ -584,7 +585,8 @@ def main():
             label = "＋" + "、".join(f"{s}{names.get(s, '')}" for s in g[:4]) + (f"…共{len(g)}檔" if len(g) > 4 else "")
             rows[label], money[label] = pool_test(g, dates, t, cons, kw, names, label, f"{tag}_{i}")
             print(f"  {label} 完成", flush=True)
-        out = pd.DataFrame(rows).T[POOL_SHOW]
+        out = pd.DataFrame(rows).T
+        out = out[POOL_SHOW + [c for c in ("前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差") if c in out.columns]]
         out["三段平均差"] = out["三段平均"] - out.iloc[0]["三段平均"]
         out["標準差差"] = out["標準差平均"] - out.iloc[0]["標準差平均"]
         mon = pd.DataFrame(money).T

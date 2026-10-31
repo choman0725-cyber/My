@@ -32,10 +32,11 @@
 - 有疑慮的地方：2311 換成 3711 的日期（2018-04-30）只由 ETF 持股推得；0056 從 3/9 月改為 6/12 月審核沒找到規則變更公告。詳見 constituents_notes.md。
 - 149 檔全部是上市股（兩個指數規則都只選上市股）。
 
-## 日線
+## 日線（2026-10-31 起全部改為 FinMind 原始價）
 
-- 141 檔現存股 + 0050、0056：yfinance `.TW`、auto_adjust=False。已去除成交量 0 的日子，價格四捨五入到小數 4 位。
-- 8 檔下市或合併股 yfinance 抓不到，改用 FinMind TaiwanStockPrice 原始日線（high/low = max/min，volume = Trading_Volume 股數）。
+- **2026-10-31 重建**：全部 188 檔（含 0050、0056、0051 與 2006–2015 的舊成分股）改用 FinMind `TaiwanStockPrice` 原始成交價（`update_universe_finmind.py`，2006-01-02 起），`adj_close` 自算；`share_events_all.csv` 記錄分割、配股、減資的股數比例，引擎用它把 EPS、股利、股價換成同一股數基準。
+- **為什麼換掉 yfinance**：yfinance `auto_adjust=False` 的 `close` 仍然是對配股／分割調整過的價格，不是當天真實成交價（例：6669 緯穎上市首日 yfinance 36.71、真實 138.85；每次除息前一日收盤都與證交所 `before_price` 不符，只配息的 2330 才一致）。殖利率＝預估股利 ÷ close，配股／分割前的殖利率會被放大（倍數＝之後所有配股／分割比例的乘積）。另外 yfinance 缺 9 個台股交易日（多為週六補班日：2017-02-18、06-03、09-30、2018-03-31、12-22，及 2019-09-09、2021-04-06、2021-08-17、2025-08-01）。
+- 以下為舊說明（2026-10-30 版，供對照）：141 檔現存股 + 0050、0056 曾用 yfinance `.TW`、auto_adjust=False；8 檔下市或合併股用 FinMind 原始日線（high/low = max/min，volume = Trading_Volume 股數）。
   adj_close 由 FinMind 還原股價是付費資料，所以自行計算：
   - 公式：adj_close = close × Π(除權息參考價 ÷ 除權息前收盤價)，乘積涵蓋該日之後的每次除權息，用 dividend_result_all.csv。
   - 以 2382 驗證，各時點的係數與 Yahoo 的 adj_close/close 到小數 4 位完全一致。

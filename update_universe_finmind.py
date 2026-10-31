@@ -64,8 +64,12 @@ class FinMind:
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
         self.refresh, self.pause, self.calls = refresh, pause, 0
+        self.disabled = set()
 
-    def get(self, dataset, data_id, start, end):
+    def get(self, dataset, data_id, start, end, optional=False):
+        """optional=True：遇到 402（可能是付費資料集）就整個停用該資料集、回傳空表，不等待。"""
+        if dataset in self.disabled:
+            return pd.DataFrame()
         CACHE.mkdir(parents=True, exist_ok=True)
         f = CACHE / f"{dataset}_{data_id}_{start}_{end}.json"
         if f.exists() and not self.refresh:
@@ -88,6 +92,10 @@ class FinMind:
                 body = {}
             status = body.get("status", r.status_code)
             if r.status_code == 402 or status == 402:
+                if optional:
+                    print(f"    {dataset} 回 402（{body.get('msg', '')}），本次略過此資料集")
+                    self.disabled.add(dataset)
+                    return pd.DataFrame()
                 if waited >= 75 * 60:
                     raise RuntimeError("等待流量限制超過 75 分鐘，請稍後重跑（已抓的會從快取接續）")
                 print(f"    FinMind 流量限制（本次已抓 {self.calls} 次），5 分鐘後續抓… {body.get('msg', '')}")
@@ -237,8 +245,8 @@ def main():
             div = fm.get("TaiwanStockDividend", sid, a.start, a.end)
             if not div.empty:
                 div_new.append(div)
-            reduction = fm.get("TaiwanStockCapitalReductionReferencePrice", sid, a.start, a.end)
-            split = fm.get("TaiwanStockSplitPrice", sid, a.start, a.end)
+            reduction = fm.get("TaiwanStockCapitalReductionReferencePrice", sid, a.start, a.end, optional=True)
+            split = fm.get("TaiwanStockSplitPrice", sid, a.start, a.end, optional=True)
         if not res.empty:
             res_new.append(res)
 

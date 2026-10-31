@@ -120,6 +120,7 @@
 ## 四、備選
 
 - **備案 C：首買比例 0.8，其餘不變**（第 0.3 節）。要用它只需把 `daily_run.py` 的 `FINAL` 加上 `"first": 0.8`。代價：標準差 1.1 → 2.2、滿倉更快、加碼常受現金限制。
+- **備案 D（觀察中）：訊號信心 ≥3 的買點首買 0.8，其餘 0.5**（`confidence_study.py v3b`）。信心＝F1 今日殖利率對該股過去 3 年中位數（≥1.5 倍 2 分、≥1.25 倍 1 分）＋F4 大盤（200 日線上 1 分、前 5 日放量 +1、放量日長下影線 +1）＋F5 近 20 日有急漲急跌 +1＋F6 距 60 日高點 −15～−40% +1。修正後資料：三段 19.8、最差 10% 17.3（所有版本最高）、標準差 1.5、52 個情境 46 個贏 A、500 萬 2,826 萬；A 與 C 之間的折衷。事件層級訊號弱（相關 0.08）且方向是看過結果才定的，**不升格**，先觀察。「略過低信心」的做法三版都輸 A，不要再試。
 - 舊資料上的備選（V1 10%/5%、V2 20%/4.5%、拆兩個帳戶）尚未在修正後資料重測，暫不列為備選。
 
 ## 五、相關檔案
@@ -129,4 +130,5 @@
 - 每日執行：`daily_run.py`
 - 研究結果：`results/param_opt_*.csv`、`target_scan.csv`、`mix_v12_*.csv`、`tranche_*.csv`、`slots_*.csv`、`etf_split_*.csv`、`money_12_475.csv`；連續 N 年賺錢濾網：`profit_years_{3,5,10}_*.csv`（`profit_years_study.py`）、`final_profit5_eval.csv`／`final_profit5_money.csv`（新舊正式版並排與 500 萬表）
 - 個股認證（別人推薦的股票合不合這套）：`stock_fit.py`，池內對照基準 `results/stock_fit_pool.csv`
+- 訊號信心分級研究（三版，結論不採用、備案 D 觀察）：`confidence_study.py`、`results/confidence_*`
 - 資料修正與重新驗證：`DATA_AUDIT.md`（另一 session 的稽核報告）、`update_universe_finmind.py`、`data/universe/share_events_all.csv`、`reopt_study.py` 與 `results/reopt_stage1.csv`／`reopt_combo_*.csv`／`reopt_final_*.csv`、`results/final_corrected_money.csv`（修正後 500 萬各追加方式）

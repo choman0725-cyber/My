@@ -355,3 +355,21 @@ python -I verify/pcf_check.py; python -I verify/pcf_check2.py   # 任務 6（cur
 - 不是 FinMind 的只剩兩樣：成分股名單（FinMind 沒有這種資料，用元大 PCF 重建），以及 19 筆 2011 年以前減資的類型和退還現金（FinMind 沒有 2011 年以前的減資資料，用附來源的人工表）。
 - 我之前說要修的都修了；還原價用另一份獨立寫的程式重算一遍，188 檔全部吻合。
 - 正式版的結果沒有變：500 萬到 2,668 萬，仍然低於同期 0050 買進持有的 3,986 萬。
+
+### 10.7 全面比對（用 token 重抓全部股票）
+這次不再抽樣：188 檔日線、除權息結果全部重抓，186 檔個股的財報、股利政策也全部重抓，共 600 次 FinMind 請求，逐列比對。
+
+| 資料 | 範圍 | 結果 |
+|---|---|---|
+| 日線 open/high/low/close/volume | 188 檔、857,521 列 | **0 筆無法解釋的差異**。FinMind 多出的 620 列都是程式刻意刪除的：成交量 0 有 619 列、單日錯價 1 列（8454 2014-09-09）；另有 17 列開盤 0 改成收盤（都是第一個交易日或恢復交易日）。檔案有、FinMind 沒有：0 列 |
+| eps_all.csv | 13,463 筆 | 完全相同 |
+| dividend_all.csv | 3,183 筆 | 完全相同 |
+| dividend_result_all.csv | 3,447 筆（個股 3,389＋0050 31＋0056 27） | 完全相同 |
+| adj_close | 188 檔 | 獨立重算全部吻合（§10.3） |
+| TAIEX、SOX、2382 | 全部列 | 完全相同（§10.3） |
+
+```bash
+python -I verify/fetch_full.py          # 需要 token（環境變數 FINMIND_TOKEN 或 KEY），約 600 次請求
+python -I verify/cmp_prices.py ALL --no-adj
+python -I verify/cmp_fund.py ALL
+```

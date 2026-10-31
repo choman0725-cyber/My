@@ -7,7 +7,7 @@
   符合預期或更好：不做任何事，照原本的續抱條件（獲利 ≥ 12% 且推估殖利率 < 4.75% 才賣）。
   半年配、季配的股票沒有「一年一次公告 vs 年度推估」的對應關係，不做對照。
 另測一組用「下一年推估」（近四季 EPS × (1＋近 2 季營收年增) × 利潤率係數，yield_variant_study 的 H5）當預期值。
-用法：python miss_study.py（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
+用法：python miss_study.py [main|ext]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
 """
 import pickle
 
@@ -22,7 +22,7 @@ from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 
-TOLS = (0.0, 0.10, 0.20)
+TOLS = (0.0, 0.10, 0.20, 0.25, 0.30, 0.40)
 VARIANTS = {"正式版（已公告用公告值）": dict(est="A", miss=None),
             "A0 一律推估、不對照": dict(est="A0", miss=None)}
 for tol in TOLS:
@@ -30,6 +30,16 @@ for tol in TOLS:
         VARIANTS[f"A0＋低於預期{tol:.0%}→{mname}"] = dict(est="A0", miss=(tol, mode))
 VARIANTS["H5 下一年推估＋低於預期10%→伺機出場"] = dict(est="H5", miss=(0.10, "tech_profit"))
 VARIANTS["H5 下一年推估＋低於預期10%→隔天賣"] = dict(est="H5", miss=(0.10, "immediate"))
+# 第二輪（python miss_study.py ext）：容忍度往外推，以及把對照規則蓋在正式版殖利率（已公告用公告值）上
+EXT_TOLS = (0.25, 0.30, 0.40)
+EXT = {"正式版（已公告用公告值）": dict(est="A", miss=None)}
+for tol in (0.20, 0.30):
+    for mode, mname in (("tech_profit", "伺機出場"), ("immediate", "隔天賣")):
+        EXT[f"正式版殖利率＋低於預期{tol:.0%}→{mname}"] = dict(est="A", miss=(tol, mode))
+for tol in EXT_TOLS:
+    for mode, mname in (("tech_profit", "伺機出場"), ("immediate", "隔天賣")):
+        EXT[f"A0＋低於預期{tol:.0%}→{mname}"] = dict(est="A0", miss=(tol, mode))
+SETS = {"main": VARIANTS, "ext": EXT}
 
 
 def build(data, dates):
@@ -75,12 +85,14 @@ def to_kw2(cfg):
 po.to_kw = to_kw2
 
 
-def main():
+def main(which="main"):
+    variants = SETS[which]
     po.setup(); G = rs.G; dates = G["dates"]
     data, _ = pickle.loads(ps.PREPARED.read_bytes())
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     mem_all = ps.membership(cons, dates)
     est, miss, events = build(data, dates)
+    import warnings; warnings.simplefilter("ignore", FutureWarning)
     pd.set_option("display.width", 320); pd.set_option("display.unicode.east_asian_width", True)
     ev = events[events["年度"] >= 2016]
     print(f"【全池年配股公告 vs 公告前推估（A0），2016 年起 {len(ev)} 筆】")
@@ -89,7 +101,7 @@ def main():
     ev.round(2).to_csv(RESULTS / "miss_study_events.csv", index=False, encoding="utf-8-sig")
 
     rows, money = {}, []
-    for name, spec in VARIANTS.items():
+    for name, spec in variants.items():
         Y = est[spec["est"]]
         for sid, d in G["sub"].items():
             d["yield"] = Y[sid]
@@ -103,7 +115,7 @@ def main():
             cfg.update(miss_exit=spec["miss"][1], miss_key="miss")
         po.CONFIGS[name] = cfg
         po.apply(cfg)
-        m = po.evaluate([name], "miss")
+        m = po.evaluate([name], f"miss_{which}")
         rows[name] = m.loc[name]
         tr, eq = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, **po.to_kw(cfg))
         cl = tr[tr["出場"].notna()]
@@ -115,8 +127,8 @@ def main():
         tr.to_csv(RESULTS / f"miss_study_trades_{name}.csv", index=False, encoding="utf-8-sig")
         print(f"  {name} 完成", flush=True)
     M = pd.DataFrame(rows).T
-    M.round(2).to_csv(RESULTS / "miss_study_summary.csv", encoding="utf-8-sig")
-    pd.DataFrame(money).to_csv(RESULTS / "miss_study_money.csv", index=False, encoding="utf-8-sig")
+    M.round(2).to_csv(RESULTS / f"miss_study_{which}_summary.csv", encoding="utf-8-sig")
+    pd.DataFrame(money).to_csv(RESULTS / f"miss_study_{which}_money.csv", index=False, encoding="utf-8-sig")
     print("\n【穩健度：前 7 年 20 情境、後 3 年延續／單獨】")
     print(M[po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())
     print("\n【500 萬 2017 起不追加】")
@@ -124,4 +136,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(sys.argv[1] if len(sys.argv) > 1 else "main")

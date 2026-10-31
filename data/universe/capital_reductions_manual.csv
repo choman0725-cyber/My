@@ -1,0 +1,20 @@
+stock_id,date,type,cash_per_share,ref_price,share_ratio,source
+2301,2007-07-26,現金減資,,,0.70,https://apps.digitimes.com/news/a20061114PR208.html
+2303,2007-10-09,現金減資,3.0,,0.69716643,https://www.taipeitimes.com/News/biz/archives/2007/09/20/2003379649
+2337,2006-05-17,彌補虧損,0,,0.5837,https://finance.technews.tw/2017/03/07/mxic-capital-reduce/
+2352,2007-10-15,彌補虧損,0,,,https://phys.org/news/2007-04-benq-brand.html
+2357,2010-06-24,分割和碩＋減資,,225.1,0.223899,官方參考價 225.1；每股換 0.15 股華碩＋0.4037274 股和碩，股數比例取價值等值 50.4/225.1；https://event.asus.com/ir_spin_off/files/ir_pass_1209_asus_pegatron.pdf
+2379,2007-06-25,現金減資,,,0.5,https://alphaspread.com/security/twse/2379/investor-returns/i/stock-splits（非一手來源）
+2401,2007-03-26,現金減資,5.0,,0.5,https://www.cw.com.tw/article/5110254
+2408,2009-08-26,彌補虧損,0,,0.3357,https://apps.digitimes.com/news/a20090729PB202.html
+2412,2008-01-09,現金減資,,,0.90909,https://www.digitimes.com/news/a20080222PD203.html
+2412,2009-03-20,現金減資,,,0.835329,https://capedge.com/filing/1132924/0001193125-09-023704/CHT-6K
+2412,2010-02-08,現金減資（推定）,,,0.90909,"未找到公告；FinMind 已發行股數 10,666,488,999→9,696,808,181，且 2010-01-21～02-05 停牌"
+2475,2010-08-31,彌補虧損,0,,0.394,https://apps.digitimes.com/news/a20100409PD213.html
+2610,2009-09-15,彌補虧損,0,,0.692,https://www.businesstoday.com.tw/article/category/80402/post/200909100030/
+2618,2009-09-18,彌補虧損,0,,0.57,https://centreforaviation.com/analysis/reports/eva-commences-capital-restructure-ana-sees-return-in-economy-class-demand-10328
+2633,2015-12-25,彌補虧損,0,,0.40,https://www.taipeitimes.com/News/taiwan/archives/2015/07/28/2003624081
+2707,2007-02-02,現金減資,7.2,,0.2783,https://www.cna.com.tw/news/afe/201703250058.aspx
+3045,2008-02-20,現金減資,2.4,,0.76,https://apps.digitimes.com/news/a20070731PD200.html
+4904,2008-03-28,現金減資,,,0.80,https://apps.digitimes.com/news/a20070501PR205.html
+6116,2007-10-26,彌補虧損,0,,0.828,https://apps.digitimes.com/news/a20070213PM200.html

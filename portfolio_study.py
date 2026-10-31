@@ -73,19 +73,37 @@ def eps_table(eps_all, stock_id):
     return e.reset_index(drop=True)
 
 
-def dividend_events(div_all, stock_id, res_all=None):
+def _result_cash(res_all, stock_id, share_all=None):
+    """除權息結果裡的現金股利（每股，除息當時的股數）。
+    「息」：stock_and_cache_dividend 就是現金。「權息」：stock_and_cache_dividend 含配股的價值，
+    現金 = 除權前價 − 參考價 × 配股比例（比例取自 share_events_all.csv 同日 ±5 天的配股列）。"""
+    r = res_all[(res_all["stock_id"].astype(str) == stock_id)
+                & (res_all["stock_or_cache_dividend"].astype(str).str.contains("息"))].copy()
+    if r.empty:
+        return pd.DataFrame(columns=["fy", "cash", "announced", "ex_date"])
+    r["date"] = pd.to_datetime(r["date"])
+    ev = pd.DataFrame(columns=["date", "share_ratio"]) if share_all is None else \
+        share_all[(share_all["stock_id"] == stock_id) & share_all["kind"].astype(str).str.startswith("配股")]
+    cash = []
+    for _, x in r.iterrows():
+        if str(x["stock_or_cache_dividend"]) == "息":
+            cash.append(float(x["stock_and_cache_dividend"]))
+            continue
+        k = ev[(pd.to_datetime(ev["date"]) - x["date"]).abs() <= pd.Timedelta(days=5)]["share_ratio"]
+        ratio = float(k.prod()) if len(k) else 1.0
+        cash.append(max(float(x["before_price"]) - float(x["reference_price"]) * ratio, 0.0))
+    return pd.DataFrame({"fy": r["date"].dt.year - 1, "cash": cash,
+                         "announced": r["date"], "ex_date": r["date"]})
+
+
+def dividend_events(div_all, stock_id, res_all=None, share_all=None):
+    """現金股利事件 [fy, cash, announced, ex_date]。來源是股利政策（TaiwanStockDividend）；
+    股利政策缺整檔或缺個別年度（FinMind 幾乎沒有 2009 年發放的股利政策）時，用除權息結果補，
+    補的那筆視為除息日當天才得知、所屬年度＝除息年 − 1。"""
     d = div_all[div_all["stock_id"].astype(str) == stock_id].copy()
+    extra = _result_cash(res_all, stock_id, share_all) if res_all is not None else pd.DataFrame(columns=["fy", "cash", "announced", "ex_date"])
     if d.empty:
-        # 股利政策缺漏：用除權息結果補（視為年配，除息日當天才得知、所屬年度 = 除息年 - 1）
-        if res_all is None:
-            return d
-        r = res_all[(res_all["stock_id"].astype(str) == stock_id)
-                    & (res_all["stock_or_cache_dividend"].astype(str).str.contains("息"))].copy()
-        if r.empty:
-            return pd.DataFrame(columns=["fy", "cash", "announced", "ex_date"])
-        r["date"] = pd.to_datetime(r["date"])
-        return pd.DataFrame({"fy": r["date"].dt.year - 1, "cash": r["stock_and_cache_dividend"],
-                             "announced": r["date"], "ex_date": r["date"]}).sort_values("announced").reset_index(drop=True)
+        return extra[extra["cash"] > 0].sort_values("announced").reset_index(drop=True)
     d["cash"] = d["CashEarningsDistribution"].fillna(0) + d["CashStatutorySurplus"].fillna(0)
     d["announced"] = pd.to_datetime(d["AnnouncementDate"], errors="coerce")
     # 年度欄位為「不適用」等（多為資本公積發放）時，以公告年 - 1 視為所屬年度
@@ -95,7 +113,13 @@ def dividend_events(div_all, stock_id, res_all=None):
     d["fy"] = d["fy"].astype(int)
     d["ex_date"] = pd.to_datetime(d["CashExDividendTradingDate"], errors="coerce")
     d = d[d["cash"] > 0].dropna(subset=["announced"])
-    return d[["fy", "cash", "announced", "ex_date"]].sort_values("announced").reset_index(drop=True)
+    d = d[["fy", "cash", "announced", "ex_date"]]
+    if len(extra):
+        have = d["ex_date"].dropna()
+        keep = np.array([not ((have - t).abs() <= pd.Timedelta(days=10)).any() for t in extra["ex_date"]], dtype=bool)
+        miss = extra[keep & (extra["cash"] > 0).values]
+        d = pd.concat([d, miss.astype({"fy": int})], ignore_index=True)
+    return d.sort_values("announced").reset_index(drop=True)
 
 
 def forward_dividend(dates, eps, div, payout_years=3):
@@ -163,7 +187,7 @@ def fundamentals_on_share_basis(sid, raw_close, eps_all, div_all, res_all, share
     殖利率＝預估股利 ÷ 股價：EPS（季末後的股數變動）、股利（除息日當天起的變動，配股與配息同日）、
     股價（當天之後的變動）都除以同一組比例才能互相比。例：6669 2026-09 一拆三後，拆前的 EPS 要 ÷3 才能配新股價。
     注意：這裡的原始收盤必須是當天真實成交價（FinMind），不能是 yfinance 已做分割調整的 close。"""
-    eps, div = eps_table(eps_all, sid), dividend_events(div_all, sid, res_all)
+    eps, div = eps_table(eps_all, sid), dividend_events(div_all, sid, res_all, share_all)
     if share_all is not None:
         ev = list(share_all.loc[share_all["stock_id"] == sid, ["date", "share_ratio"]].itertuples(index=False, name=None))
         if ev:

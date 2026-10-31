@@ -142,10 +142,22 @@ def membership(constituents, dates):
     return {k: pd.Series(v, index=dates) for k, v in member.items()}
 
 
+def share_basis(events, when, inclusive=False):
+    """把「when 當時的每股數字」換成最新股數基準的除數：Π(變動後÷變動前股數, 變動日 > when)；inclusive 時含當天。
+    分割、配股、減資會改變股數；EPS、股利是當時的每股數字，原始股價也是，三者都除以這個值才能互相比。"""
+    when = pd.DatetimeIndex(pd.to_datetime(when))
+    out = np.ones(len(when))
+    for d, r in events:
+        out[(when <= d) if inclusive else (when < d)] *= r
+    return out
+
+
 def prepare(stock_ids, dates):
     eps_all = pd.read_csv(UNI / "eps_all.csv")
     div_all = pd.read_csv(UNI / "dividend_all.csv")
     res_all = pd.read_csv(UNI / "dividend_result_all.csv")
+    sp = UNI / "share_events_all.csv"
+    share_all = pd.read_csv(sp, dtype={"stock_id": str}, parse_dates=["date"]) if sp.exists() else None
     data, skipped = {}, []
     for sid in stock_ids:
         loaded = load_prices(sid)
@@ -153,7 +165,17 @@ def prepare(stock_ids, dates):
             skipped.append(sid)
             continue
         df, raw_close = loaded
-        dps = forward_dividend(df.index, eps_table(eps_all, sid), dividend_events(div_all, sid, res_all))
+        eps, div = eps_table(eps_all, sid), dividend_events(div_all, sid, res_all)
+        if share_all is not None:
+            ev = list(share_all.loc[share_all["stock_id"] == sid, ["date", "share_ratio"]].itertuples(index=False, name=None))
+            if ev:
+                # 殖利率＝預估股利 ÷ 股價：EPS（季末後的股數變動）、股利（除息日當天起的變動，配股與配息同日）、
+                # 股價（當天之後的變動）都換成最新股數基準。例：6669 2026-09 一拆三後，拆前的 EPS 要 ÷3 才能配新股價。
+                eps = eps.assign(eps=eps["eps"] / share_basis(ev, eps["quarter_end"]))
+                when = div["ex_date"].fillna(div["announced"])
+                div = div.assign(cash=div["cash"] / share_basis(ev, when, inclusive=True))
+                raw_close = raw_close / share_basis(ev, raw_close.index)
+        dps = forward_dividend(df.index, eps, div)
         sigs, add = entries(df)
         d = df.reindex(dates)
         last = d["close"].last_valid_index()

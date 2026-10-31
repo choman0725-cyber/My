@@ -15,6 +15,7 @@
       · FinMind 沒有任何資料的代號，保留現有檔案不動。
   - eps_all.csv、dividend_all.csv、dividend_result_all.csv：現有＋新抓的合併去重（同一筆以 FinMind 新抓的為準）。
   - prices_manifest.csv：重算來源、筆數、起訖日、SHA-256。
+  - share_events_all.csv：股數變動（分割、配股、減資），引擎用來把 EPS、股利、股價換成同一股數基準再算殖利率。
   - data/TAIEX.csv（回測的交易日曆）：現有日期保留，往前補、往後接 FinMind 的 TAIEX。
 
 股票清單 = constituents.csv 全部 149 檔 + 0050、0056（可加 --extra 補其他代號）。
@@ -144,6 +145,35 @@ def cum_factor(dates, events):
     return out.values
 
 
+def share_events(sid, div, res, reduction, split, inferred):
+    """股數變動紀錄 [(stock_id, 日期, 種類, 變動後股數 ÷ 變動前股數)]，給殖利率換算同一股數基準用。
+    配股：1 + (盈餘配股＋公積配股) ÷ 10（面額 10 元），日期＝除權交易日；股利政策缺漏時用除權息結果「權」（只有權、沒有息）的價格比。
+    分割：分割前價 ÷ 分割後價；減資：減資前收盤 ÷ 減資後參考價（現金退還型為近似）；推定減資：1 ÷ 價格係數。
+    同一事件出現在兩個來源（±5 天、比例差 <1%）只記一次。"""
+    ev = []
+    if div is not None and not div.empty and "StockExDividendTradingDate" in div:
+        x = div.copy()
+        x["stock"] = pd.to_numeric(x["StockEarningsDistribution"], errors="coerce").fillna(0) \
+            + pd.to_numeric(x["StockStatutorySurplus"], errors="coerce").fillna(0)
+        x["d"] = pd.to_datetime(x["StockExDividendTradingDate"], errors="coerce")
+        for d, st in zip(x["d"], x["stock"]):
+            if pd.notna(d) and st > 0:
+                ev.append((d, "配股", 1 + st / 10))
+    if res is not None and not res.empty:
+        r = res[res["stock_or_cache_dividend"].astype(str) == "權"]
+        for d, k in _events(r, "before_price", "reference_price"):
+            if not any(abs((d - d0).days) <= 5 for d0, _, _ in ev):
+                ev.append((d, "配股或分割（除權結果）", 1 / k))
+    for kind, lst in (("分割", _events(split, "before_price", "after_price")),
+                      ("減資", _events(reduction, "ClosingPriceonTheLastTradingDay", "PostReductionReferencePrice")),
+                      ("推定減資", inferred)):
+        for d, k in lst:
+            ratio = 1 / k
+            if not any(abs((d - d0).days) <= 5 and abs(ratio / r0 - 1) < 0.01 for d0, _, r0 in ev):
+                ev.append((d, kind, ratio))
+    return [(sid, f"{d:%Y-%m-%d}", kind, round(ratio, 6)) for d, kind, ratio in sorted(ev) if abs(ratio - 1) > 0.001]
+
+
 def finmind_price_frame(raw):
     cols = ["date", "open", "high", "low", "close", "volume"]
     if raw is None or raw.empty:
@@ -254,12 +284,12 @@ def main():
     manifest_path = UNI / "prices_manifest.csv"
     old_manifest = pd.read_csv(manifest_path, dtype=str).set_index("stock_id") if manifest_path.exists() else None
     res_hist = pd.read_csv(UNI / "dividend_result_all.csv", dtype={"stock_id": str})
-    eps_new, div_new, res_new, report, updated = [], [], [], [], set()
+    eps_new, div_new, res_new, report, updated, share_rows = [], [], [], [], set(), []
 
     for i, sid in enumerate(ids, 1):
         raw = fm.get("TaiwanStockPrice", sid, a.start, a.end)
         res = fm.get("TaiwanStockDividendResult", sid, a.start, a.end)
-        reduction = split = None
+        reduction = split = div = None
         if sid not in ETFS:
             fin = fm.get("TaiwanStockFinancialStatements", sid, a.start, a.end)
             if not fin.empty:
@@ -285,6 +315,7 @@ def main():
             continue
         inferred = inferred_reductions(new, events)
         events = sorted(events + inferred)
+        share_rows += share_events(sid, div if sid not in ETFS else None, res_all, reduction, split, inferred)
         built = build_prices(new, events)
         diff = compare(old, built)
         report.append({"stock_id": sid, "name": names.get(sid, ""), "old_rows": 0 if old is None else len(old),
@@ -314,6 +345,16 @@ def main():
         print(f"{fname}：{before} → {len(out)} 筆")
         if not a.dry_run:
             out.to_csv(UNI / fname, index=False, lineterminator="\n")
+
+    # 股數變動紀錄（分割、配股、減資）：只換掉本次更新的代號，其他保留
+    if not a.dry_run and updated:
+        sp = UNI / "share_events_all.csv"
+        cols = ["stock_id", "date", "kind", "share_ratio"]
+        keep = pd.read_csv(sp, dtype={"stock_id": str}) if sp.exists() else pd.DataFrame(columns=cols)
+        keep = keep[~keep["stock_id"].isin(updated)]
+        out = pd.concat([keep, pd.DataFrame(share_rows, columns=cols)], ignore_index=True).sort_values(["stock_id", "date"])
+        out.to_csv(sp, index=False, lineterminator="\n")
+        print(f"share_events_all.csv：{len(out)} 筆股數變動（{out['stock_id'].nunique()} 檔）")
 
     # TAIEX（交易日曆）：現有日期保留，往前補、往後接
     if not a.skip_taiex:

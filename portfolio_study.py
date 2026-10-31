@@ -183,7 +183,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
         tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
-        time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None):
+        time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all"):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -218,6 +218,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       休息期內不新買；休息期結束後照規則伺機重新建倉。
     rest_gain：組合自上次全面出清（或起跑）以來總資產漲幅達此比例（例如 0.5＝+50%）時，隔天開盤全部出清，
       之後立刻照規則重新建倉。
+    rest_mode："all"＝休息時全部出清；"profit"＝只賣扣成本後有賺的，賠錢的留著、照常加碼，休息期內一樣不新買。
     time_add_base / deep_add_base：加碼金額的計算基準。"budget"＝進場時的額度（總資產÷5，固定不變，預設）；
       "assets"＝加碼當天的總資產÷5；"position"＝加碼當天該部位的市值。再乘上 time_add_amount 或 ADDS 的比例。
     trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
@@ -404,11 +405,15 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         if resting or (rest_gain is not None and value_prev / rest_base[0] - 1 >= rest_gain):
             for s_ in list(positions):
                 o_ = data[s_]["open"][n]
-                if not np.isnan(o_):
-                    close_out(s_, n, o_, "全面休息出清" if resting else f"組合獲利達{rest_gain:.0%}全面出清")
-                    sold_today.add(s_)
-            if not positions:
-                rest_base[0] = cash
+                q_ = positions[s_]
+                if np.isnan(o_):
+                    continue
+                if rest_mode == "profit" and data[s_]["close"][p] * (1 - SELL_COST) * q_["shares"] <= q_["cost"]:
+                    continue
+                close_out(s_, n, o_, ("休息出清" if resting else f"組合獲利達{rest_gain:.0%}出清") + ("·只賣有賺" if rest_mode == "profit" else ""))
+                sold_today.add(s_)
+            if not positions or rest_mode == "profit":
+                rest_base[0] = value_prev if rest_mode == "profit" else cash
         settle_today = False
         if settle:
             if settle[0] <= 12:

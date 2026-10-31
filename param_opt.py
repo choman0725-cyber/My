@@ -40,7 +40,7 @@ DEFERS = {"不延後": {}, "B3×Rb": {"defer_breakout": "breakout_B3", "defer_re
 BASE_A = dict(min_yield=5.0, entry="任一", target=0.20, hold_yield=5.0, cap=None, floor=None, first=0.50,
               adds="A -15/-30 加30/20", time_add_days=182, time_add_amount=0.20, max_slots=5, split="不分區",
               stale=True, stale_days=365, stale_loss=-0.30, eps_exit=True, removal=True, defer="不延後",
-              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None, time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None)
+              tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None, time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all")
 BASE_B = {**BASE_A, "cap": 0.40, "split": "0050區2＋0056區3"}
 BASES = {"底A 第1名Y1不分區": BASE_A, "底B 第2名Y3封頂2+3": BASE_B}
 
@@ -100,6 +100,8 @@ def to_kw(cfg):
         kw["rest"] = G["rest"][cfg["rest"]]      # 名稱 → 事先算好的休息期陣列
     if cfg.get("rest_gain") is not None:
         kw["rest_gain"] = cfg["rest_gain"]
+    if cfg.get("rest_mode", "all") != "all":
+        kw["rest_mode"] = cfg["rest_mode"]
     for k_ in ("time_add_base", "deep_add_base"):
         if cfg.get(k_, "budget") != "budget":
             kw[k_] = cfg[k_]

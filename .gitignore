@@ -3,3 +3,4 @@ __pycache__/
 results*/portfolio_prepared.pkl
 data/universe/_finmind_cache/
 data/universe/_pcf_cache/
+data/universe/_verify_cache/

@@ -87,3 +87,10 @@
 - `python update_universe_finmind.py [--start 2006-01-01] [--end 今天]`：用 FinMind 重抓全部日線、財報、股利、減資、分割、已發行股數，重建 prices 與 share_events。
 - `python update_universe_finmind.py --local`：不重抓日線與財報，只用現有 FinMind 資料重算 adj_close 與 share_events（需要已發行股數，沒有快取時會抓）。
 - token：環境變數 FINMIND_TOKEN 或 KEY（只放在 request header）。原始回應快取在 `_finmind_cache/`、`_verify_cache/`（不進 git）。
+
+## 0051（元大中型100）成分股股價
+
+- `constituents_0051.csv` 共 325 檔。其中原本沒有資料的 167 檔，加上 0051 本身，共 168 檔，用 FinMind 補齊。prices/ 合計 356 檔。
+- 168 檔裡有 138 檔資料到 2026-10-30；其餘已下市或被合併。
+- 這些檔不影響正式版：正式版只讀 `constituents.csv`。
+- 0051 本身在 2016-12-27 有一筆成交量很小的漲停（25.20 → 27.72），隔天回到 25.35。我判斷是真實成交，予以保留。拿 0051 當比較基準時要注意這天。

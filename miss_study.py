@@ -7,7 +7,7 @@
   符合預期或更好：不做任何事，照原本的續抱條件（獲利 ≥ 12% 且推估殖利率 < 4.75% 才賣）。
   半年配、季配的股票沒有「一年一次公告 vs 年度推估」的對應關係，不做對照。
 另測一組用「下一年推估」（近四季 EPS × (1＋近 2 季營收年增) × 利潤率係數，yield_variant_study 的 H5）當預期值。
-用法：python miss_study.py [main|ext]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
+用法：python miss_study.py [main|ext|ext2]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
 """
 import pickle
 
@@ -22,7 +22,7 @@ from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 
-TOLS = (0.0, 0.10, 0.20, 0.25, 0.30, 0.40)
+TOLS = (0.0, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40)
 VARIANTS = {"正式版（已公告用公告值）": dict(est="A", miss=None),
             "A0 一律推估、不對照": dict(est="A0", miss=None)}
 for tol in TOLS:
@@ -39,7 +39,12 @@ for tol in (0.20, 0.30):
 for tol in EXT_TOLS:
     for mode, mname in (("tech_profit", "伺機出場"), ("immediate", "隔天賣")):
         EXT[f"A0＋低於預期{tol:.0%}→{mname}"] = dict(est="A0", miss=(tol, mode))
-SETS = {"main": VARIANTS, "ext": EXT}
+# 第三輪（python miss_study.py ext2）：正式版殖利率＋對照規則，容忍度 20% 的相鄰值 15%／25%
+EXT2 = {"正式版（已公告用公告值）": dict(est="A", miss=None)}
+for tol in (0.15, 0.25):
+    for mode, mname in (("tech_profit", "伺機出場"), ("immediate", "隔天賣")):
+        EXT2[f"正式版殖利率＋低於預期{tol:.0%}→{mname}"] = dict(est="A", miss=(tol, mode))
+SETS = {"main": VARIANTS, "ext": EXT, "ext2": EXT2}
 
 
 def build(data, dates):

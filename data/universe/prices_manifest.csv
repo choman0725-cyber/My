@@ -1,7 +1,11 @@
 stock_id,name,source,rows,first_date,last_date,eps_rows,dividend_rows,dividend_result_rows,sha256
 0050,元大台灣50,FinMind TaiwanStockPrice + 自算 adj_close,5112,2006-01-02,2026-10-30,,,,737e78f21dd53a2bdbccdaf4740bcad61b3e6eef0bef152b9a47565e43e435b5
 0051,元大中型100,FinMind TaiwanStockPrice + 自算 adj_close,4951,2006-08-31,2026-10-30,,,,c7b4181354b3a52fa7c7c3621c56a445088645c9f76c69ceb0cdbbbacf163536
+0052,富邦科技,FinMind TaiwanStockPrice + 自算 adj_close,4833,2006-09-12,2026-10-30,,,,4749a593a1b2ed49745773a71a130dee1baa8c9554e1b3b31eff4f7103f142e7
 0056,元大高股息,FinMind TaiwanStockPrice + 自算 adj_close,4626,2007-12-26,2026-10-30,,,,a3421981a11d94355831557616a098a07ccaf3495d321f6cea354e3b596183d9
+00679B,元大美債20年,FinMind TaiwanStockPrice + 自算 adj_close,2382,2017-01-17,2026-10-30,,,,8239928f4fafa0aa3554724298f4012769b5c42fd0f55dcaeff39e2c02c8ae4b
+00687B,國泰20年美債,FinMind TaiwanStockPrice + 自算 adj_close,2329,2017-04-13,2026-10-30,,,,513ed75c0e096d2aa518ca2252b8b8751c3c14f6f94b8a8ad53a44a1f7318637
+00719B,元大美債1-3,FinMind TaiwanStockPrice + 自算 adj_close,2123,2018-02-01,2026-10-30,,,,7fa5626767d1cf689910751cea2924172f7207b12dd1de0c57a831bb508363e3
 1101,台泥,FinMind TaiwanStockPrice + 自算 adj_close,5114,2006-01-02,2026-10-30,82,22,22,8e8b2dfb5113cb9054e7d159a2e74eadb71f88c2e2b3493164a30e6a09b835c8
 1102,亞泥,FinMind TaiwanStockPrice + 自算 adj_close,5116,2006-01-02,2026-10-30,82,20,21,13b3db83e94247599f43ed363375bcf112b80ab007e11ca39f8286b0c23d4ee6
 1201,味全,FinMind TaiwanStockPrice + 自算 adj_close,5117,2006-01-02,2026-10-30,82,13,13,6a96bf6f4b7ce48f0113453b9ad73629829c8d7a4aedd7c81d81f30e66e4643b

@@ -53,7 +53,7 @@ PRICES = UNI / "prices"
 CACHE = UNI / "_finmind_cache"
 API = "https://api.finmindtrade.com/api/v4/data"
 PRICE_COLS = ["date", "open", "high", "low", "close", "adj_close", "volume"]
-ETFS = ("0050", "0056")
+ETFS = ("0050", "0051", "0056")
 SOURCE = "FinMind TaiwanStockPrice + 自算 adj_close"
 
 
@@ -278,7 +278,7 @@ def main():
     if extra_cons:
         cons = pd.concat([cons] + extra_cons, ignore_index=True)
     names = cons.drop_duplicates("stock_id", keep="last").set_index("stock_id")["name"].to_dict()
-    names.update({"0050": "元大台灣50", "0056": "元大高股息"})
+    names.update({"0050": "元大台灣50", "0051": "元大中型100", "0056": "元大高股息"})
     ids = list(ETFS) + sorted(cons["stock_id"].unique()) + [s for s in a.extra if s not in names]
     if a.only:
         ids = [s for s in ids if s in set(a.only)] + [s for s in a.only if s not in ids]

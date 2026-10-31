@@ -566,6 +566,7 @@ def main():
                 print("\n【留池測試】加進 75 檔後的 20 情境＋後 3 年（配對相對正式版）")
                 print(out[cols2].round(2).to_string())
             out.round(3).to_csv(RESULTS / f"stock_fit_{tag}_keep.csv", encoding="utf-8-sig")
+        sc_cand.loc[sc_cand["代號"].isin(G["sub"]), "留池"] = "已在池內"
         sc_cand["結論·單筆"] = sc_cand["代號"].map(single)
         sc_cand["結論·留池"] = sc_cand["代號"].map({s: v[0] for s, v in keep.items()})
         print("\n【結論】")

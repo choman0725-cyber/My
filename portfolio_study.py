@@ -229,7 +229,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
         tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
         time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all",
-        win_add=None, win_add_max=1):
+        win_add=None, win_add_max=1, cash_rate=0.0, cash_index=None, cash_reserve=0.0):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -268,6 +268,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     time_add_base / deep_add_base：加碼金額的計算基準。"budget"＝進場時的額度（總資產÷5，固定不變，預設）；
       "assets"＝加碼當天的總資產÷5；"position"＝加碼當天該部位的市值。再乘上 time_add_amount 或 ADDS 的比例。
     trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
+    cash_rate／cash_index／cash_reserve：閒置現金的去處（近似：視為可即時變現，不計交易成本）。
+      cash_rate＝年利率（例如 0.04＝閒錢年化 4%，模擬放短天期債券 ETF）；cash_index＝與 dates 對齊的每日報酬陣列
+      （例如 0050 的日報酬，模擬閒錢放 0050）；兩者都只套用在「現金 − cash_reserve × 前一日總資產」的部分。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
       且出現加碼訊號（爆量下影線／長紅）時，加碼「部位市值 × win_add」，每個部位最多 win_add_max 次。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
@@ -436,6 +439,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             rest_base[0] += contributions[n]
             log(n, "", "追加資金", np.nan, 0.0, contributions[n])
         value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
+        if (cash_rate or cash_index is not None) and cash > 0:
+            idle = max(cash - cash_reserve * value_prev, 0.0)
+            r_ = (cash_index[n] if cash_index is not None else 0.0) + cash_rate / 252
+            if not np.isnan(r_):
+                cash += idle * r_
+                value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
         sold_today = set()
         pending_offsets = []
         def occupies(s_, q):

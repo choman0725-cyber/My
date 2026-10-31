@@ -1,10 +1,14 @@
 """FinMind fetch with on-disk cache (raw JSON response). Waits on 402."""
-import json, time, sys, requests
+import json, os, time, sys, requests
 from pathlib import Path
 CACHE = Path("data/universe/_verify_cache/finmind")
 CACHE.mkdir(parents=True, exist_ok=True)
 API = "https://api.finmindtrade.com/api/v4/data"
 CALLS = 0
+SESSION = requests.Session()
+_TOKEN = os.environ.get("FINMIND_TOKEN") or os.environ.get("KEY")  # token 只放 header，不寫檔
+if _TOKEN:
+    SESSION.headers["Authorization"] = f"Bearer {_TOKEN}"
 def get(dataset, data_id="", start="2006-01-01", end="2026-10-31"):
     global CALLS
     f = CACHE / f"{dataset}_{data_id or 'ALL'}_{start}_{end}.json"
@@ -14,7 +18,7 @@ def get(dataset, data_id="", start="2006-01-01", end="2026-10-31"):
     if data_id: p["data_id"] = data_id
     while True:
         try:
-            r = requests.get(API, params=p, timeout=90)
+            r = SESSION.get(API, params=p, timeout=90)
         except requests.RequestException as e:
             print("conn err", e, file=sys.stderr); time.sleep(10); continue
         try: body = r.json()

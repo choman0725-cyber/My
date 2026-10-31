@@ -147,7 +147,7 @@ def build(sid, dates, t):
 
 def payout_stats(sid, t):
     """配息年數、配息率平均與變異係數（同 forward_dividend 的年度配息率定義）。"""
-    e, div = ps.eps_table(t["eps_all"], sid), ps.dividend_events(t["dividend_all"], sid, t["dividend_result_all"])
+    e, div = ps.eps_table(t["eps_all"], sid), ps.dividend_events(t["dividend_all"], sid, t["dividend_result_all"], t.get("share_events_all"))
     if e.empty or div.empty:
         return 0, np.nan, np.nan
     annual = e.groupby("fy")["eps"].agg(["sum", "size"])

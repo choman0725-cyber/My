@@ -253,7 +253,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
         tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
         time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all",
-        win_add=None, win_add_max=1, cash_rate=0.0, cash_index=None, cash_reserve=0.0):
+        win_add=None, win_add_max=1, cash_rate=0.0, cash_index=None, cash_reserve=0.0,
+        hedge_index=None, hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_min=0.01, hedge_cost=0.001,
+        hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
+        hedge_exit_cooldown=True, hedge_idle_days=0):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -295,6 +298,18 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     cash_rate／cash_index／cash_reserve：閒置現金的去處（近似：視為可即時變現，不計交易成本）。
       cash_rate＝年利率（例如 0.04＝閒錢年化 4%，模擬放短天期債券 ETF）；cash_index＝與 dates 對齊的每日報酬陣列
       （例如 0050 的日報酬，模擬閒錢放 0050）；兩者都只套用在「現金 − cash_reserve × 前一日總資產」的部分。
+    hedge_*：閒錢避險部位（使用者 2026-10-31 的邏輯）。hedge_index＝與 dates 對齊的避險標的每日報酬陣列（0050、債券 ETF，或依大盤年線
+      切換的混合陣列）。每天收盤前，現金超過「hedge_reserve × 總資產」（預設 10%）的部分、且 ≥ hedge_min × 總資產，就投入避險部位
+      （進出各收 hedge_cost）。避險部位扣出場成本後獲利 ≥ hedge_take（5%）→ 全部領出變現金，之後 hedge_cooldown 個交易日（2 週＝10）
+      不再投入；虧損則續抱、不停損。續抱期間若買進新股票：先用現金（預備金）買，買完即啟動「出清方案」——避險部位一回到損益兩平
+      （扣成本後 ≥ 0）立刻全部出掉，出掉的錢用來加碼那檔剛買的股票：hedge_add_timing="signal"＝等該股再出現技術買點／加碼訊號
+      （最多等 hedge_add_wait 個交易日，到期直接加）、"immediate"＝出清隔天開盤就加；hedge_add_cap="shortfall"＝最多補到首買原本該買
+      的金額（額度 × 首買比例）、"budget"＝最多補到整個單檔額度（總資產 ÷ 5）；剩下的錢回到現金。hedge_force=True＝買股時現金不足
+      就立刻（不等兩平）出清避險部位來買。hedge_from="start"＝起跑日的現金就算閒錢；"first_sell"＝第一次賣出股票之後才開始。
+      hedge_exit_cooldown=True＝兩平出清後也套用 cooldown（避免當天又把剩餘現金投回去）。
+      hedge_idle_days=N＝現金要連續 N 個交易日都超過預備金才算「閒錢」投入（0＝當天就投；避免停利當天投入、隔天買股又被限縮）。
+      避險部位計入總資產（額度＝總資產 ÷ 5 也包含它）；買股、加碼只能用現金，不會動用避險部位（除非 hedge_force）。
+      eq.attrs["hedge_log"] 記錄每段避險部位的進出與損益。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
       且出現加碼訊號（爆量下影線／長紅）時，加碼「部位市值 × win_add」，每個部位最多 win_add_max 次。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
@@ -337,6 +352,25 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
+    # 避險部位狀態
+    H = {"val": 0.0, "cost": 0.0, "cool": -1, "liq": False, "start": None, "armed": hedge_from == "start", "deposits": 0, "idle_run": 0}
+    earmarks = []      # [{sid, cap}]：出清後要加碼的股票與金額上限
+    pool = []          # [{sid, amt, since}]：出清後等待加碼的錢（實體在 cash 裡）
+    hedge_log = []
+
+    def pos_value(k):
+        return sum(q["shares"] * data[s_]["close_ff"][k] for s_, q in positions.items())
+
+    def hedge_exit(n, reason):
+        nonlocal cash
+        proceeds = H["val"] * (1 - hedge_cost)
+        cash += proceeds
+        hedge_log.append({"進場": dates[H["start"]], "出場": dates[n], "原因": reason, "投入": H["cost"], "回收": proceeds,
+                          "報酬%": 100 * (proceeds / H["cost"] - 1), "持有日": (dates[n] - dates[H["start"]]).days, "投入次數": H["deposits"]})
+        cost_, start_ = H["cost"], H["start"]
+        H.update(val=0.0, cost=0.0, start=None, deposits=0)
+        log(n, "避險", "避險出場", np.nan, 0.0, proceeds, f"{reason}；投入 {cost_:.4f}，損益 {100 * (proceeds / cost_ - 1):+.1f}%")
+        return proceeds
 
     raw_cache = {}
 
@@ -437,9 +471,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             return
         p_ = n - 1
         mv = sum(q["shares"] * data[s_]["close_ff"][p_] for s_, q in positions.items())
+        tot = cash + mv + H["val"]
         ledger.append({"日期": dates[n], "代號": sid, "動作": action, "價格": price, "股數": shares_delta, "金額": amount,
-                       "說明": note, "現金": cash, "持股檔數": len(positions), "持股市值": mv, "總資產": cash + mv,
-                       "持股": "、".join(f"{s_}({q['shares'] * data[s_]['close_ff'][p_] / (cash + mv):.0%})" for s_, q in positions.items())})
+                       "說明": note, "現金": cash, "避險部位": H["val"], "持股檔數": len(positions), "持股市值": mv, "總資產": tot,
+                       "持股": "、".join(f"{s_}({q['shares'] * data[s_]['close_ff'][p_] / tot:.0%})" for s_, q in positions.items())})
 
     def close_out(sid, n, price, reason):
         nonlocal cash
@@ -462,13 +497,50 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             cash += contributions[n]
             rest_base[0] += contributions[n]
             log(n, "", "追加資金", np.nan, 0.0, contributions[n])
-        value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
+        if H["val"] > 0 and hedge_index is not None and not np.isnan(hedge_index[n]):
+            H["val"] *= 1 + hedge_index[n]
+        value_prev = cash + H["val"] + pos_value(p)
         if (cash_rate or cash_index is not None) and cash > 0:
             idle = max(cash - cash_reserve * value_prev, 0.0)
             r_ = (cash_index[n] if cash_index is not None else 0.0) + cash_rate / 252
             if not np.isnan(r_):
                 cash += idle * r_
-                value_prev = cash + sum(pos["shares"] * data[s_]["close_ff"][p] for s_, pos in positions.items())
+                value_prev = cash + H["val"] + pos_value(p)
+        if H["val"] > 0:
+            pl_ = H["val"] * (1 - hedge_cost) / H["cost"] - 1
+            if H["liq"] and pl_ >= 0:
+                proceeds = hedge_exit(n, "兩平出清")
+                for e_ in earmarks:
+                    if e_["sid"] in positions and e_["cap"] > 1e-9 and proceeds > 1e-9:
+                        amt = min(e_["cap"], proceeds)
+                        pool.append({"sid": e_["sid"], "amt": amt, "since": n})
+                        proceeds -= amt
+                earmarks.clear()
+                H["liq"] = False
+                if hedge_exit_cooldown:
+                    H["cool"] = n + hedge_cooldown
+            elif not H["liq"] and pl_ >= hedge_take:
+                hedge_exit(n, f"獲利達{hedge_take:.0%}領出")
+                H["cool"] = n + hedge_cooldown
+        # 出清後的加碼：等該股技術買點／加碼訊號（或等滿 hedge_add_wait 天），用保留的錢加碼；股票已賣掉就把錢放回現金
+        for q_ in list(pool):
+            sid_ = q_["sid"]
+            if sid_ not in positions:
+                pool.remove(q_)
+                continue
+            d_, o_ = data[sid_], data[sid_]["open"][n]
+            if np.isnan(o_):
+                continue
+            if hedge_add_timing == "immediate" or d_["add"][p] or d_["buy"][p] or n - q_["since"] >= hedge_add_wait:
+                invest = min(q_["amt"], cash)
+                if invest > 1e-9:
+                    pos_ = positions[sid_]
+                    pos_["shares"] += invest * (1 - BUY_COST) / o_
+                    pos_["cost"] += invest
+                    pos_["hedge_adds"] = pos_.get("hedge_adds", 0) + 1
+                    cash -= invest
+                    log(n, sid_, "加碼", o_, invest * (1 - BUY_COST) / o_, invest, "避險出清後加碼")
+                pool.remove(q_)
         sold_today = set()
         pending_offsets = []
         def occupies(s_, q):
@@ -719,6 +791,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 budget = value_prev / MAX_SLOTS
                 # 首買比例：預設全域 first；data[sid]["first_frac"]（每日陣列，信心分級用）存在時以訊號日的值為準
                 fr = data[sid]["first_frac"][p] if "first_frac" in data[sid] else first
+                if hedge_force and H["val"] > 0 and cash < budget * fr:
+                    hedge_exit(n, "買股現金不足·強制出清")
+                    H["liq"] = False
+                    earmarks.clear()
                 invest = min(cash, budget * fr)
                 if target_util is not None and util_mode == "committed":
                     reserved = sum(q["budget"] * sum(ADDS[q["adds"]:]) for q in positions.values())
@@ -735,12 +811,32 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 cash -= invest
-                log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）")
+                log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）"
+                    + ("；啟動避險出清方案" if H["val"] > 0 else ""))
                 last_buy_n = n
+                if H["val"] > 0:        # 續抱避險期間買了股票：啟動出清方案，兩平後的錢加碼這檔
+                    H["liq"] = True
+                    cap_ = (budget if hedge_add_cap == "budget" else budget * fr) - invest
+                    earmarks.append({"sid": sid, "cap": max(cap_, 0.0)})
                 picked += 1
                 if zone:
                     zone_free[zone] -= 1
-        value = cash
+        if hedge_index is not None:
+            if not H["armed"] and sold_today:
+                H["armed"] = True
+            reserved_pool = sum(q_["amt"] for q_ in pool)
+            excess = cash - reserved_pool - hedge_reserve * value_prev
+            H["idle_run"] = H["idle_run"] + 1 if excess >= hedge_min * value_prev else 0
+            if (H["armed"] and not H["liq"] and n >= H["cool"] and excess >= hedge_min * value_prev
+                    and H["idle_run"] > hedge_idle_days and not np.isnan(hedge_index[n])):
+                cash -= excess
+                H["val"] += excess * (1 - hedge_cost)
+                H["cost"] += excess
+                H["deposits"] += 1
+                if H["start"] is None:
+                    H["start"] = n
+                log(n, "避險", "避險投入", np.nan, 0.0, excess, f"現金超過總資產 {hedge_reserve:.0%} 的部分")
+        value = cash + H["val"]
         for sid, pos in positions.items():
             d = data[sid]
             if not np.isnan(d["low"][n]):
@@ -765,6 +861,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     eq.attrs["資金使用率%"] = 100 * float(np.mean(exposure))
     eq.attrs["positions"] = {sid: dict(pos) for sid, pos in positions.items()}  # 期末部位狀態（供每日執行程式用）
     eq.attrs["cash"] = cash
+    eq.attrs["hedge"] = dict(H)
+    eq.attrs["hedge_log"] = hedge_log
     return pd.DataFrame(trades, columns=cols), eq
 
 

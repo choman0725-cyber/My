@@ -41,7 +41,9 @@ BASE_A = dict(min_yield=5.0, entry="任一", target=0.20, hold_yield=5.0, cap=No
               adds="A -15/-30 加30/20", time_add_days=182, time_add_amount=0.20, max_slots=5, split="不分區",
               stale=True, stale_days=365, stale_loss=-0.30, eps_exit=True, removal=True, defer="不延後",
               tech_exit=None, tech_profit=False, tranches=None, settle=None, trap_days=None, time_add_trap=False, trap_ref="cost", mkt=None, time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all",
-              profit_years=None)   # 買進濾網：最近 N 個已知完整年度 EPS 全部 > 0（不足 N 年以已知年度計）；None＝不用
+              profit_years=None,   # 買進濾網：最近 N 個已知完整年度 EPS 全部 > 0（不足 N 年以已知年度計）；None＝不用
+              growth_rel=None,     # (k, gmed, window)：成長股改用「殖利率 ≥ 自己中位×k」買、「≥ 自己中位」續抱（rules_ext）；None＝不用
+              conf_first=None)     # (hi, frac)：信心 ≥ hi 的買點首買額度 frac，其餘用 first（rules_ext）；None＝不用
 BASE_B = {**BASE_A, "cap": 0.40, "split": "0050區2＋0056區3"}
 BASES = {"底A 第1名Y1不分區": BASE_A, "底B 第2名Y3封頂2+3": BASE_B}
 
@@ -108,6 +110,8 @@ def to_kw(cfg):
     for k_ in ("time_add_base", "deep_add_base"):
         if cfg.get(k_, "budget") != "budget":
             kw[k_] = cfg[k_]
+    if cfg.get("growth_rel"):
+        kw["hold_yield"] = "hy_rel"       # 成長股日子用自己的中位數當續抱門檻，其餘日子陣列裡放 hold_yield 常數
     if cfg.get("trap_days") is not None:
         kw["trap_days"] = cfg["trap_days"]
     if cfg.get("time_add_trap"):
@@ -125,6 +129,7 @@ def to_kw(cfg):
 
 _applied = {}
 _mk = {}
+_conf = {}
 
 
 def market_stats(universe="all"):
@@ -159,20 +164,43 @@ def apply(cfg):
     ps.MAX_SLOTS, ps.TARGET = cfg["max_slots"], cfg["target"]
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
-    k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), len(G["dates"]))
+    k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), str(cfg.get("growth_rel")),
+         str(cfg.get("conf_first")), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
         hy = None
         if cfg.get("mkt") and cfg["mkt"][2] is not None:
             universe, _, hold_k, _ = cfg["mkt"]; med, sd, _ = market_stats(universe); hy = med - hold_k * sd
+        prof = {}
         for sid, d in G["sub"].items():
             y = d["yield"]
             d["buy"] = sig[sid] & ~np.isnan(thr) & (np.nan_to_num(y, nan=-1) >= thr)
             if cfg.get("profit_years"):
-                d["buy"] &= ps.profit_years_flag(d.get("annual_eps"), G["dates"], cfg["profit_years"])
+                prof[sid] = ps.profit_years_flag(d.get("annual_eps"), G["dates"], cfg["profit_years"])
+                d["buy"] &= prof[sid]
+            else:
+                prof[sid] = np.ones(len(G["dates"]), bool)
             if hy is not None:
                 d["hy_rel"] = hy
+            d.pop("first_frac", None)
+        if cfg.get("growth_rel"):
+            import rules_ext
+            gk, gmed, gwin = cfg["growth_rel"]
+            base = {sid: d["buy"] for sid, d in G["sub"].items()}
+            res = rules_ext.growth_relative(G["sub"], sig, G["dates"], prof, base, float(cfg["hold_yield"] or 0), gk, gmed, gwin)
+            for sid, (buy, hyr, growth, ratio, med) in res.items():
+                d = G["sub"][sid]
+                d["buy"], d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = buy, hyr, growth, ratio, med
+        if cfg.get("conf_first"):
+            import rules_ext
+            hi, frac = cfg["conf_first"]
+            if "f4" not in _conf:
+                _conf["f4"] = rules_ext.market_factor(G["dates"])
+            for sid, (score, fdf) in rules_ext.confidence(G["sub"], G["dates"], _conf["f4"]).items():
+                d = G["sub"][sid]
+                d["conf_score"] = score
+                d["first_frac"] = np.where(score >= hi, frac, cfg["first"])
         _applied["buy"] = k
 
 

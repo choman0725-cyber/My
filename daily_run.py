@@ -21,7 +21,10 @@ import portfolio_study as ps
 import robust_study as rs
 from backtest import ROOT, SELL_COST
 
-FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0), "profit_years": 5}
+FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0), "profit_years": 5,
+         "growth_rel": (1.25, 4.0, 750), "conf_first": (3, 0.8)}
+# growth_rel=(k, gmed, window)：過去 750 日殖利率中位數 < 4% 的股票（成長股）改用「殖利率 ≥ 自己中位×1.25」買、「≥ 自己中位」續抱
+# conf_first=(hi, frac)：信心 ≥ 3 的買點首買額度 80%，其餘 50%（信心定義見 rules_ext.py）
 # mkt=(範圍, k, 續抱k, 下限)：買進門檻＝max(當天全部 0050＋0056 成分股預估殖利率中位數 ＋ k×σ, 下限)；續抱 k=None 表示續抱維持固定 hold_yield
 # profit_years=5：買進時最近 5 個已知完整會計年度（Q4 於隔年 3/31 後視為已知）年度 EPS 全部 > 0；上市不滿 5 年以已知年度計
 RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣都隔天開盤）
@@ -29,11 +32,13 @@ RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣�
   買進：預估殖利率 >= max(當天全部 0050＋0056 成分股預估殖利率的中位數, 5%)
         （預估股利＝近四季 EPS × 近 3 年平均配息率；年配且已公告未除息用公告值）
         且公司最近 5 個已知完整年度每年 EPS 都 > 0（不足 5 年以已知年度計）
+        成長股（過去 3 年殖利率中位數 < 4%）改為：預估殖利率 >= 自己 3 年中位數 × 1.25
         且技術買點任一：多指標超賣共振／爆量長下影線或爆量長紅／布林下軌＋KD 低檔金叉／低檔區＋價量
-        同日多檔依殖利率高到低挑；每檔額度＝當時總資產 ÷ 5，首買額度 50%
+        同日多檔依殖利率高到低挑；每檔額度＝當時總資產 ÷ 5，首買額度 50%；信心 >= 3 的買點首買 80%
+        （信心＝相對殖利率 0～2 ＋ 大盤 0～3 ＋ 近 20 日急漲急跌 1 ＋ 距 60 日高點 −15～−40% 1）
   加碼：收盤曾跌到首買價 -15% / -30% 後，出現爆量下影線或長紅且收盤仍低於首買價，加碼額度 30% / 20%
         持有每滿半年仍虧損、出現同樣訊號且收盤低於平均成本，再加碼額度 20%
-  賣出：收盤較平均成本獲利 >= 12% 且預估殖利率 < 4.75%（算不出殖利率視同 < 4.75%）
+  賣出：收盤較平均成本獲利 >= 12% 且預估殖利率 < 4.75%（成長股：< 自己 3 年中位數；算不出殖利率視同跌破）
         近四季 EPS 合計轉負：隔天賣；被移出成分股後：出現爆量上影線／長黑且不賠錢就賣
   名額：虧損超過 30% 或持有超過 1 年的部位不佔 5 檔名額；被移出成分股的部位也不佔
   不停損、無持有期限、無冷卻期"""
@@ -118,7 +123,8 @@ def main():
         gain = px / avg - 1; y = d["yield"][p]
         status = []
         if gain >= FINAL["target"]:
-            status.append("已達 12%，等殖利率 < 4.75%" if (not np.isnan(y) and y >= FINAL["hold_yield"]) else "達賣出條件")
+            hy_ = d["hy_rel"][p] if "hy_rel" in d else FINAL["hold_yield"]
+            status.append(f"已達 12%，等殖利率 < {hy_:.2f}%" if (not np.isnan(y) and not np.isnan(hy_) and y >= hy_) else "達賣出條件")
         if q["removed"] or not G["member"][sid].iloc[p]:
             status.append("已移出成分股")
         held = (last - dates[q["start"]]).days
@@ -156,14 +162,20 @@ def main():
         print(f"注意：{', '.join(stale)} 在 {last.date()} 沒有報價資料，引擎會等資料補齊後才判斷賣出／加碼。")
     print(f"執行後現金約 {cash1 * a.capital / 1e4:,.0f} 萬")
 
-    print(f"\n【觀察名單：殖利率 >= 買進門檻 {thr[p]:.2f}% 且在成分股內、未持有（等技術買點；「近5年有虧損」的不會買）】")
+    print(f"\n【觀察名單：殖利率達門檻（一般股 {thr[p]:.2f}%；成長股＝自己 3 年中位×1.25）且在成分股內、未持有（等技術買點；「近5年有虧損」的不會買）】")
     watch = []
     for sid, d in G["sub"].items():
         y = d["yield"][p]
-        if sid in pos0 or np.isnan(y) or y < thr[p] or not G["member"][sid].iloc[p]:
+        growth = bool(d.get("growth_flag", np.zeros(len(dates), bool))[p])
+        gate = d["own_median"][p] * FINAL["growth_rel"][0] if growth and FINAL.get("growth_rel") else thr[p]
+        if sid in pos0 or np.isnan(y) or np.isnan(gate) or y < gate or not G["member"][sid].iloc[p]:
             continue
         ok = ps.profit_years_flag(d.get("annual_eps"), dates, FINAL["profit_years"])[p] if FINAL.get("profit_years") else True
         watch.append(dict(代號=sid, 名稱=names.get(sid, ""), 收盤=d["close_ff"][p], 預估殖利率=round(y, 2),
+                          成長股="是" if growth else "", 自己中位=round(d["own_median"][p], 2) if "own_median" in d and not np.isnan(d["own_median"][p]) else None,
+                          倍數=round(d["own_ratio"][p], 2) if "own_ratio" in d and not np.isnan(d["own_ratio"][p]) else None,
+                          信心=int(d["conf_score"][p]) if "conf_score" in d else None,
+                          首買=f"{d['first_frac'][p]:.0%}" if "first_frac" in d else f"{FINAL['first']:.0%}",
                           近5年有虧損="" if ok else "是", 今日買訊="是" if d["buy"][p] else "", 接近買點="是" if d["near_near1"][p] else ""))
     w = pd.DataFrame(watch).sort_values("預估殖利率", ascending=False) if watch else pd.DataFrame()
     with pd.option_context("display.width", 300, "display.unicode.east_asian_width", True):

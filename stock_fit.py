@@ -250,9 +250,21 @@ def certify(sids, dates, t, thr, kw, names, s_n):
             print("略過", msg)
             continue
         d = build(sid, dates, t)
-        buy = d["sig"][po.ENTRIES[dr.FINAL["entry"]]] & ~np.isnan(thr) & (np.nan_to_num(d["yield"], nan=-1) >= thr)
-        if dr.FINAL.get("profit_years"):
-            buy &= ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"])
+        sig1 = d["sig"][po.ENTRIES[dr.FINAL["entry"]]]
+        buy = sig1 & ~np.isnan(thr) & (np.nan_to_num(d["yield"], nan=-1) >= thr)
+        prof1 = ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"]) if dr.FINAL.get("profit_years") else np.ones(len(dates), bool)
+        buy &= prof1
+        d["hy_rel"] = np.full(len(dates), float(dr.FINAL["hold_yield"] or 0))
+        if dr.FINAL.get("growth_rel"):            # 正式版 2026-10-31：成長股相對規則與信心分級（rules_ext）
+            import rules_ext
+            gk, gmed, gwin = dr.FINAL["growth_rel"]
+            buy, d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = rules_ext.growth_relative(
+                {sid: d}, {sid: sig1}, dates, {sid: prof1}, {sid: buy}, float(dr.FINAL["hold_yield"] or 0), gk, gmed, gwin)[sid]
+        if dr.FINAL.get("conf_first"):
+            import rules_ext
+            hi, frac = dr.FINAL["conf_first"]
+            score, _ = rules_ext.confidence({sid: d}, dates)[sid]
+            d["conf_score"], d["first_frac"] = score, np.where(score >= hi, frac, dr.FINAL["first"])
         d["buy"] = buy
         member = pd.Series(True, index=dates)
         y = yield_metrics(d, thr, s_n)

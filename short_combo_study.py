@@ -9,7 +9,9 @@
             「多頭現金 ＋ 放空累計損益 − 預留（總資產 × reserve）」，不夠就縮小名目（低於原名目 25% 就放棄）；
             多頭買股後現金不夠維持保證金 → 同一天開盤先回補放空（多頭優先）
 合併資產 ＝ 多頭資產 ＋ 放空已實現 ＋ 放空未實現（含借券費）。
-用法：python short_combo_study.py
+用法：python short_combo_study.py          # 單一路徑（500 萬、2017-01-03 起）各參數版本
+      python short_combo_study.py robust   # 20 情境（5 起始日 × 4 追加）× 8 個參數版本，結果 results/short_combo_robust_*.csv
+採用版本（COMBO_RULES.md）：名目 1/10、預留 20%、不夠就不空。
 """
 import pickle
 
@@ -266,5 +268,76 @@ def main():
     Y.round(1).to_csv(RESULTS / "short_combo_yearly.csv", encoding="utf-8-sig")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and len(__import__("sys").argv) == 1:
     main()
+
+
+# ---------- 穩健度：5 起始日 × 4 追加 × 參數變體 ----------
+
+STARTS = ["2017-01-03", "2017-07-03", "2018-01-02", "2018-07-02", "2019-01-02"]
+CONTRIBS = {
+    "不追加": {},
+    "每年50萬": {y: 500_000 for y in range(2018, 2027)},
+    "每年100萬": {y: 1_000_000 for y in range(2018, 2027)},
+    "分段50/80/100萬": {**{y: 500_000 for y in (2018, 2019, 2020)}, **{y: 800_000 for y in (2021, 2022, 2023)}, **{y: 1_000_000 for y in (2024, 2025, 2026)}},
+}
+ROBUST_VARIANTS = {
+    "名目1/5·預留10%·不夠就縮小": dict(size=0.20, reserve=0.10, shrink=True),
+    "名目1/5·預留10%·不夠就不空": dict(size=0.20, reserve=0.10, shrink=False),
+    "名目1/5·預留20%·不夠就縮小": dict(size=0.20, reserve=0.20, shrink=True),
+    "名目1/5·預留20%·不夠就不空": dict(size=0.20, reserve=0.20, shrink=False),
+    "名目1/10·預留10%·不夠就縮小": dict(size=0.10, reserve=0.10, shrink=True),
+    "名目1/10·預留10%·不夠就不空": dict(size=0.10, reserve=0.10, shrink=False),
+    "名目1/10·預留20%·不夠就縮小": dict(size=0.10, reserve=0.20, shrink=True),
+    "名目1/10·預留20%·不夠就不空": dict(size=0.10, reserve=0.20, shrink=False),
+}
+
+
+def robust():
+    setup()
+    dates = S["dates"]
+    rows = []
+    paths = {}
+    for st in STARTS:
+        for cname, sched in CONTRIBS.items():
+            paths[(st, cname)] = long_path(st, sched)
+    for vname, kw in ROBUST_VARIANTS.items():
+        for (st, cname), L in paths.items():
+            T, comb, _ = simulate(L, "idle", **kw)
+            m = metrics(L, T, comb); m.pop("_yr")
+            rows.append(dict(版本=vname, 起始=st, 追加=cname, **m))
+    # 對照：放空規則原設定獨立帳戶在各起始日的表現（與追加無關）
+    df = pd.DataFrame(rows)
+    df["IRR改善"] = df["IRR"] - df["純多IRR"]; df["回撤變化"] = df["回撤"] - df["純多回撤"]
+    df.round(2).to_csv(RESULTS / "short_combo_robust_runs.csv", index=False, encoding="utf-8-sig")
+    g = df.groupby("版本").agg(情境數=("IRR", "size"), 純多IRR中位=("純多IRR", "median"), 合併IRR中位=("IRR", "median"),
+                              IRR改善中位=("IRR改善", "median"), IRR改善最差=("IRR改善", "min"), IRR改善最好=("IRR改善", "max"),
+                              改善為負的情境=("IRR改善", lambda x: int((x < 0).sum())),
+                              回撤變化中位=("回撤變化", "median"), 回撤變化最差=("回撤變化", "min"),
+                              放空筆數中位=("放空筆數", "median"), 勝率中位=("勝率%", "median"), 每筆平均中位=("每筆平均%", "median"),
+                              名目占原規則中位=("平均名目占原規則%", "median"),
+                              放空損益中位萬=("放空總損益萬", "median"), 放空損益最差萬=("放空總損益萬", "min"),
+                              多頭要用錢合計=("多頭要用錢筆數", "sum"), 強制回補合計=("強制回補", "sum"), 斷頭合計=("斷頭", "sum"))
+    g = g.sort_values("IRR改善中位", ascending=False)
+    g.round(2).to_csv(RESULTS / "short_combo_robust_summary.csv", encoding="utf-8-sig")
+    pd.set_option("display.width", 360); pd.set_option("display.unicode.east_asian_width", True); pd.set_option("display.max_rows", 500)
+    print("【20 情境（5 起始日 × 4 追加）：做多正式版 ＋ 閒錢放空，各參數版本】")
+    print(g.round(1).to_string())
+    best = g.index[0]
+    print(f"\n【{best}：20 情境逐一】")
+    print(df[df["版本"] == best][["起始", "追加", "放空筆數", "勝率%", "每筆平均%", "放空總損益萬", "多頭要用錢筆數", "純多IRR", "IRR", "IRR改善", "純多回撤", "回撤", "期末萬", "純多期末萬"]].round(1).to_string(index=False))
+    # 多頭要用錢的那幾筆是誰
+    for vname in g.index[:2]:
+        kw = ROBUST_VARIANTS[vname]
+        hits = []
+        for (st, cname), L in paths.items():
+            T, _, _ = simulate(L, "idle", **kw)
+            h = T[T["原因"] == "多頭要用錢"]
+            for _, r in h.iterrows():
+                hits.append(dict(版本=vname, 起始=st, 追加=cname, 代號=r["代號"], 名稱=r["名稱"], 進場=r["進場"].date(), 出場=pd.Timestamp(r["出場"]).date(), 報酬=round(100 * r["報酬率"], 1), 損益萬=round(r["損益"] * CAPITAL / 1e4, 1)))
+        if hits:
+            print(f"\n【{vname}：被多頭收回現金而提前回補的放空】"); print(pd.DataFrame(hits).to_string(index=False))
+
+
+if __name__ == "__main__" and len(__import__("sys").argv) > 1 and __import__("sys").argv[1] == "robust":
+    robust()

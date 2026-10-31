@@ -15,6 +15,7 @@ hi、lo 掃一個小網格，每個版本跑 20 情境＋後 3 年＋與 A 的�
 用法：python confidence_study.py            # 第一版因子
       python confidence_study.py v2         # 第二版因子（factors_v2，使用者 2026-10-31 定義），輸出檔加 _v2
       python confidence_study.py v3         # 第三版：第二版去掉 F3、F4，F5 反向（急漲急跌 → +1），總分 0～5，輸出檔加 _v3
+      python confidence_study.py v3b        # 第三版因子、只分級不略過（≥hi 首買 0.8，其餘 0.5）
 輸出：results/confidence_events.csv（每個買點事件的因子與結果）、confidence_buckets.csv、confidence_eval.csv、confidence_money.csv
 """
 import numpy as np
@@ -151,14 +152,16 @@ def main(version="v1"):
     kw = po.to_kw(dr.FINAL)
     thr = po.buy_threshold(dr.FINAL)
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
-    F = factors_v2(G, dates, thr) if version in ("v2", "v3") else factors(G, dates, thr)
-    if version == "v3":
+    F = factors_v2(G, dates, thr) if version in ("v2", "v3", "v3b") else factors(G, dates, thr)
+    if version in ("v3", "v3b"):
         # 第三版（使用者 2026-10-31）：移除 F3、F4；F5 反向（近 20 日有急漲急跌 → +1）；保留 F1、F2、F6。總分 0～5
         for sid, (score, fdf, starts, hits) in list(F.items()):
             fdf = fdf.rename(columns={"F3基本面": "x3基本面", "F4大盤": "x4大盤", "F5急漲跌": "F5急漲跌+"})
             fdf["F5急漲跌+"] = -fdf["F5急漲跌+"]
             F[sid] = (fdf[["F1相對殖利率", "F2共振", "F5急漲跌+", "F6回檔60"]].sum(axis=1).values, fdf, starts, hits)
     grid = [(3, 0), (3, 1), (4, 0), (4, 1), (5, 0)] if version == "v3" else GRID
+    if version == "v3b":          # 第三版因子、只分級不略過：信心 ≥ hi 首買 0.8，其餘 0.5
+        grid = [(1, -1), (2, -1), (3, -1), (4, -1)]
     sfx = "" if version == "v1" else f"_{version}"
     FCOLS = [c for c in F[next(iter(F))][1].columns if c.startswith("F")]
 
@@ -212,7 +215,7 @@ def main(version="v1"):
     run_variant("A 全部首買0.5", f"conf{sfx}_A", lambda sc: np.full(len(sc), MID_FRAC), lambda sc: np.ones(len(sc), bool))
     run_variant("C 全部首買0.8", f"conf{sfx}_C", lambda sc: np.full(len(sc), HI_FRAC), lambda sc: np.ones(len(sc), bool))
     for hi, lo in grid:
-        run_variant(f"信心 ≥{hi} 走C、≤{lo} 略過", f"conf{sfx}_{hi}_{lo}",
+        run_variant(f"信心 ≥{hi} 走C、≤{lo} 略過" if lo >= 0 else f"信心 ≥{hi} 走C、其餘走A（不略過）", f"conf{sfx}_{hi}_{lo}",
                     lambda sc, hi=hi: np.where(sc >= hi, HI_FRAC, MID_FRAC), lambda sc, lo=lo: sc > lo)
     for sid, d in G["sub"].items():
         d["buy"] = orig[sid]; d.pop("first_frac", None)

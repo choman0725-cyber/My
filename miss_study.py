@@ -7,7 +7,7 @@
   符合預期或更好：不做任何事，照原本的續抱條件（獲利 ≥ 12% 且推估殖利率 < 4.75% 才賣）。
   半年配、季配的股票沒有「一年一次公告 vs 年度推估」的對應關係，不做對照。
 另測一組用「下一年推估」（近四季 EPS × (1＋近 2 季營收年增) × 利潤率係數，yield_variant_study 的 H5）當預期值。
-用法：python miss_study.py [main|ext|ext2]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
+用法：python miss_study.py [main|ext|ext2|cut]（需 results/portfolio_prepared.pkl 與 data/universe/financials_all.csv）
 """
 import pickle
 
@@ -44,15 +44,23 @@ EXT2 = {"正式版（已公告用公告值）": dict(est="A", miss=None)}
 for tol in (0.15, 0.25):
     for mode, mname in (("tech_profit", "伺機出場"), ("immediate", "隔天賣")):
         EXT2[f"正式版殖利率＋低於預期{tol:.0%}→{mname}"] = dict(est="A", miss=(tol, mode))
-SETS = {"main": VARIANTS, "ext": EXT, "ext2": EXT2}
+# 第四輪（python miss_study.py cut）：「不如預期」改看有沒有真的砍股利（公告低於去年實際股利），正式版殖利率＋伺機出場
+CUT = {"正式版（已公告用公告值）": dict(est="A", miss=None)}
+for ct in (0.0, 0.10, 0.20):
+    CUT[f"正式版殖利率＋砍股利{ct:.0%}以上→伺機出場"] = dict(est="A", miss=(0.0, "tech_profit"), kind="cut", cut_tol=ct)
+for tol in (0.10, 0.20):
+    CUT[f"正式版殖利率＋低於推估{tol:.0%}且低於去年→伺機出場"] = dict(est="A", miss=(tol, "tech_profit"), kind="both")
+CUT["正式版殖利率＋砍股利10%以上→隔天賣"] = dict(est="A", miss=(0.0, "immediate"), kind="cut", cut_tol=0.10)
+SETS = {"main": VARIANTS, "ext": EXT, "ext2": EXT2, "cut": CUT}
 
 
 def build(data, dates):
+    """回傳三種推估殖利率陣列 {est: {sid: array}} 與年配股公告事件表（含公告前推估值 A0／H5、去年股利、除息日）。"""
     eps_all = pd.read_csv(ps.UNI / "eps_all.csv")
     div_all = pd.read_csv(ps.UNI / "dividend_all.csv")
     res_all = pd.read_csv(ps.UNI / "dividend_result_all.csv")
     fin_all = pd.read_csv(ps.UNI / "financials_all.csv")
-    est, miss, events = {"A": {}, "A0": {}, "H5": {}}, {}, []
+    est, events = {"A": {}, "A0": {}, "H5": {}}, []
     for sid in data:
         df, raw_close = ps.load_prices(sid)
         eps, div = ps.eps_table(eps_all, sid), ps.dividend_events(div_all, sid, res_all)
@@ -63,22 +71,37 @@ def build(data, dates):
                "H5": ps.forward_dividend(df.index, eps, div, factor=f5, use_announced=False)}
         for k, v in dps.items():
             est[k][sid] = (100 * v / raw_close).reindex(dates).values
-        annual = len(div) and (div.groupby("fy").size() == 1).all()
-        for k in ("A0", "H5"):
-            for tol in TOLS:
-                flag = pd.Series(False, index=dates)
-                if annual:
-                    for _, r in div.iterrows():
-                        before = dps[k][dps[k].index < r["announced"]].dropna()
-                        if not len(before) or pd.isna(r["ex_date"]):
-                            continue
-                        short = r["cash"] < before.iloc[-1] * (1 - tol)
-                        if k == "A0" and tol == TOLS[0]:
-                            events.append(dict(代號=sid, 年度=r["fy"], 公告=r["announced"], 推估=before.iloc[-1], 公告值=r["cash"], 差異=100 * (r["cash"] / before.iloc[-1] - 1)))
-                        if short:
-                            flag[(dates >= r["announced"]) & (dates < r["ex_date"])] = True
-                miss[(k, tol, sid)] = flag.values
-    return est, miss, pd.DataFrame(events)
+        if not len(div) or not (div.groupby("fy").size() == 1).all():
+            continue
+        by = div.groupby("fy")["cash"].sum()
+        for _, r in div.iterrows():
+            if pd.isna(r["ex_date"]):
+                continue
+            row = dict(代號=sid, 年度=r["fy"], 公告=r["announced"], 除息=r["ex_date"], 公告值=r["cash"], 去年股利=by.get(r["fy"] - 1, np.nan))
+            for k in ("A0", "H5"):
+                before = dps[k][dps[k].index < r["announced"]].dropna()
+                row[f"推估_{k}"] = before.iloc[-1] if len(before) else np.nan
+            events.append(row)
+    ev = pd.DataFrame(events)
+    ev["差異"] = 100 * (ev["公告值"] / ev["推估_A0"] - 1)
+    ev["對去年"] = 100 * (ev["公告值"] / ev["去年股利"] - 1)
+    return est, ev
+
+
+def flags(ev, dates, est_key, kind, tol, cut_tol=0.0):
+    """依規則把事件轉成每檔每日的「不如預期」標記（公告日到除息日）。
+    kind="est"：公告值 < 推估 × (1 − tol)；"cut"：公告值 < 去年股利 × (1 − cut_tol)；"both"：兩者皆是。"""
+    e = ev.dropna(subset=[f"推估_{est_key}"])
+    below_est = e["公告值"] < e[f"推估_{est_key}"] * (1 - tol)
+    cut = (e["去年股利"] > 0) & (e["公告值"] < e["去年股利"] * (1 - cut_tol))
+    hit = {"est": below_est, "cut": cut, "both": below_est & cut}[kind]
+    out = {}
+    for sid, g in e[hit].groupby("代號"):
+        f = np.zeros(len(dates), bool)
+        for _, r in g.iterrows():
+            f |= ((dates >= r["公告"]) & (dates < r["除息"])).values
+        out[sid] = f
+    return out
 
 
 _orig_to_kw = po.to_kw
@@ -96,13 +119,14 @@ def main(which="main"):
     data, _ = pickle.loads(ps.PREPARED.read_bytes())
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     mem_all = ps.membership(cons, dates)
-    est, miss, events = build(data, dates)
+    est, events = build(data, dates)
     import warnings; warnings.simplefilter("ignore", FutureWarning)
     pd.set_option("display.width", 320); pd.set_option("display.unicode.east_asian_width", True)
     ev = events[events["年度"] >= 2016]
     print(f"【全池年配股公告 vs 公告前推估（A0），2016 年起 {len(ev)} 筆】")
     print("  低於推估的比例：", {f"低於{t:.0%}": f"{100 * (ev['差異'] < -100 * t).mean():.0f}%" for t in TOLS},
           "　中位差異", round(ev["差異"].median(), 1), "%")
+    print("  低於去年股利的比例：", {f"砍{t:.0%}以上": f"{100 * (ev['對去年'] < -100 * t).mean():.0f}%" for t in (0.0, 0.10, 0.20)})
     ev.round(2).to_csv(RESULTS / "miss_study_events.csv", index=False, encoding="utf-8-sig")
 
     rows, money = {}, []
@@ -110,8 +134,11 @@ def main(which="main"):
         Y = est[spec["est"]]
         for sid, d in G["sub"].items():
             d["yield"] = Y[sid]
-            if spec["miss"]:
-                d["miss"] = miss[("A0" if spec["est"] == "A" else spec["est"], spec["miss"][0], sid)]   # A 公告前的推估＝A0
+        if spec["miss"]:
+            fl = flags(events, dates, "A0" if spec["est"] == "A" else spec["est"], spec.get("kind", "est"),
+                       spec["miss"][0], spec.get("cut_tol", 0.0))   # A 公告前的推估＝A0
+            for sid, d in G["sub"].items():
+                d["miss"] = fl.get(sid, np.zeros(len(dates), bool))
         Yall = pd.DataFrame({s: np.where(mem_all[s].values, Y[s], np.nan) for s in Y if s in mem_all}, index=dates)
         po._mk[("all", len(dates))] = (Yall.median(axis=1).values, Yall.std(axis=1).values, Yall.notna().sum(axis=1).values)
         po._applied.clear()

@@ -35,7 +35,8 @@ python ledger_report.py [--capital --start --contrib]
 產出 `results/對帳單_正式版.md/.csv`（逐筆，含成交後現金％、庫存水位％）、`_月底水位.csv`、`_年底持股.csv`。
 
 ### 更新資料
-1. 更新 `data/universe/prices/*.csv`（含 adj_close）、`eps_all.csv`、`dividend_all.csv`、`dividend_result_all.csv`、`constituents.csv`，全部抓到**同一天**（目前部分個股只到 10-28，會讓最後一天的中位數檔數變少）。
+1. 在能連 FinMind 的地方跑 `python update_universe_finmind.py`（預設 2006-01-01 起抓到今天，可設 `FINMIND_TOKEN`；約 900 次請求，遇流量限制自動等待、可中斷續跑）。它會更新 `data/universe/prices/*.csv`（含 adj_close）、`eps_all.csv`、`dividend_all.csv`、`dividend_result_all.csv`、`prices_manifest.csv`、`data/TAIEX.csv`，並輸出逐檔比對 `data/universe/update_report.csv`。`constituents.csv` 不在內（成分股名單只有 2015-09 起，2006–2015 的舊成分股要另外整理，可用 `--extra` 加代號）。
+   - 日線改為全部用 FinMind 原始價＋自算還原價。原本 141 檔的 yfinance `close` 已做配股／分割調整，會讓殖利率（股利 ÷ close）在配股／分割前被高估，例：6669 緯穎 2020-08-11 以「殖利率 8.32%」買進，實際價約 706 元、殖利率約 2.8%。更新後回測數字會改變，需要重跑。
 2. 刪掉 `results/portfolio_prepared.pkl`，再 `python portfolio_electronics.py` 重建（含 149 檔的殖利率序列；約 3 分鐘建快取＋7 分鐘跑它附帶的回測）。**這個 pkl 被 .gitignore 排除、不在 git 裡**，新環境第一次跑時也要這樣重建；只想建快取不跑回測可用：
    `python -c "import pickle,pandas as pd,portfolio_study as ps;from backtest import RESULTS,ROOT;cons=pd.read_csv(ps.UNI/'constituents.csv',dtype={'stock_id':str,'etf':str});cal=pd.read_csv(ROOT/'data'/'TAIEX.csv',parse_dates=['date'])['date'];dates=pd.DatetimeIndex(cal[cal>=ps.START-pd.Timedelta(days=5)]).sort_values();(RESULTS/'portfolio_prepared.pkl').write_bytes(pickle.dumps(ps.prepare(sorted(cons['stock_id'].unique()),dates)))"`
 3. 刪掉 `results/param_opt_sigs.pkl`（技術訊號快取，這個有進 git）讓它重算。

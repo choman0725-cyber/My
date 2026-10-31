@@ -327,20 +327,27 @@ SCORE_ITEMS = {  # 欄位: (越大越好?, 說明)
 }
 
 
-def percentile(ref_values, x, higher_better):
-    v = pd.Series(ref_values).dropna().values
+def percentile(ref_values, x, higher_better, weights=None):
+    """x 在 ref_values 裡的百分位（0～100）。weights 給每個對照值的權重（例如成交次數），None＝每檔一票。"""
+    v = pd.Series(ref_values, dtype=float)
+    w = pd.Series(1.0, index=v.index) if weights is None else pd.Series(weights, dtype=float).reindex(v.index).fillna(0)
+    m = v.notna() & (w > 0)
+    v, w = v[m].values, w[m].values
     if len(v) == 0 or pd.isna(x):
         return np.nan
-    p = 100 * ((v < x).sum() + 0.5 * (v == x).sum()) / len(v)
+    p = 100 * (w[v < x].sum() + 0.5 * w[v == x].sum()) / w.sum()
     return p if higher_better else 100 - p
 
 
-def score_rows(df, ref):
-    """df：certify() 的結果；ref：池內對照（只取有成交過的股票）。回傳每檔的百分位、綜合分數與警示。"""
+def score_rows(df, ref, weight="trades"):
+    """df：certify() 的結果；ref：池內對照（只取有成交過的股票）。
+    weight="trades"：對照股票按單檔模擬成交次數加權（＝「池子裡一筆典型交易」）；"equal"：每檔一票。
+    回傳每檔的百分位、綜合分數、認證等級、留池建議與警示。"""
     ref = ref[ref["模擬筆數"] >= 1]
+    wts = ref["模擬筆數"] if weight == "trades" else None
     out = []
     for _, r in df.iterrows():
-        pcts = {c: percentile(ref[c], r[c], hb) for c, (hb, _) in SCORE_ITEMS.items()}
+        pcts = {c: percentile(ref[c], r[c], hb, wts) for c, (hb, _) in SCORE_ITEMS.items()}
         valid = [p for p in pcts.values() if not pd.isna(p)]
         total = np.mean(valid) if valid else np.nan
         warn = []
@@ -349,21 +356,27 @@ def score_rows(df, ref):
         if pd.notna(r.get("資料起")) and pd.Timestamp(r["資料起"]) > pd.Timestamp("2022-01-01"):
             warn.append("沒經歷過 2018／2022 空頭")
         verdict = ("不如池子" if total < 40 else "與池子相當" if total < 60 else "優於池子") if valid else "無法評分"
-        out.append({"代號": r["代號"], "名稱": r["名稱"], "綜合分": total, "判定": verdict, "警示": "；".join(warn),
-                    **{f"{c}": r[c] for c in SCORE_ITEMS}, **{f"{c}百分位": p for c, p in pcts.items()}})
+        grade_ = r.get("等級", "")
+        keep = ("可考慮留池，跑 --pool 確認" if (grade_ == "適合" and valid and total >= 60)
+                else "只做這一筆" if grade_ != "不適合" else "不留池")
+        out.append({"代號": r["代號"], "名稱": r["名稱"], "綜合分": total, "判定": verdict, "認證等級": grade_, "留池": keep,
+                    "警示": "；".join(warn), **{f"{c}": r[c] for c in SCORE_ITEMS}, **{f"{c}百分位": p for c, p in pcts.items()}})
     return pd.DataFrame(out)
 
 
-def today_gate(d, dates, thr, member_today, held):
-    """今天能不能買：連續 5 年賺錢、殖利率 ≥ 門檻、技術買訊或接近買點。回傳 (全過?, 逐項字典)。"""
+def today_gate(d, dates, thr, member_today, held, min_yield=None):
+    """今天能不能買：連續 5 年賺錢、殖利率 ≥ 門檻、技術買訊或接近買點。
+    min_yield：評分用的放寬門檻（例如 4%，「快到了想先看」）；None＝用正式版門檻 thr。回傳 (全過?, 逐項字典)。"""
     p = len(dates) - 1
     y = d["yield"][p]
+    gate_y = thr[p] if min_yield is None else min_yield
     ok_profit = bool(ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"])[p]) if dr.FINAL.get("profit_years") else True
-    ok_yield = (not np.isnan(y)) and (not np.isnan(thr[p])) and y >= thr[p]
+    ok_yield = (not np.isnan(y)) and (not np.isnan(gate_y)) and y >= gate_y
     sig_today = bool(d["sig"][po.ENTRIES[dr.FINAL["entry"]]][p]) if "sig" in d else bool(d["buy"][p])
     near = bool(d["near_near1"][p]) if "near_near1" in d else False
-    items = {"今日殖利率%": None if np.isnan(y) else round(y, 2), "買進門檻%": round(thr[p], 2),
-             "殖利率達門檻": ok_yield, "連續5年賺錢": ok_profit, "在成分股內": bool(member_today), "已持有": bool(held),
+    items = {"今日殖利率%": None if np.isnan(y) else round(y, 2), "評分門檻%": round(gate_y, 2), "正式買進門檻%": round(thr[p], 2),
+             "距正式門檻%": None if np.isnan(y) else round(y - thr[p], 2),
+             "殖利率達評分門檻": ok_yield, "連續5年賺錢": ok_profit, "在成分股內": bool(member_today), "已持有": bool(held),
              "今日技術買訊": sig_today, "接近買點": near,
              "近兩季EPS年減": bool(d["bad"][p]) if "bad" in d else None}
     return ok_profit and ok_yield and (sig_today or near) and not held, items
@@ -378,6 +391,8 @@ def main():
     ap.add_argument("--pool", action="store_true", help="加進池子跑 20 情境＋後 3 年")
     ap.add_argument("--each", action="store_true", help="--pool 時每檔分別加入")
     ap.add_argument("--score", action="store_true", help="單筆機會評分：和池內有成交過的股票比百分位，並列出今天觀察名單上的競爭者")
+    ap.add_argument("--score-yield", type=float, default=4.0, help="評分模式的殖利率門檻（預設 4%%，比正式買進門檻寬，給「快到了」的股票先看）")
+    ap.add_argument("--ref-weight", choices=["trades", "equal"], default="trades", help="對照基準：trades＝按池內各檔成交次數加權（預設），equal＝每檔一票")
     ap.add_argument("--tag", default=None, help="輸出檔名標籤")
     a = ap.parse_args()
 
@@ -446,28 +461,34 @@ def main():
               f"（{100 * cash / eq.iloc[-1]:.0f}%），一筆首買約 {eq.iloc[-1] * CAPITAL / ps.MAX_SLOTS * dr.FINAL['first'] / 1e4:,.0f} 萬")
         comp = []
         for s, d in G["sub"].items():
-            ok, items = today_gate(d, dates, thr, G["member"][s].iloc[p], s in pos)
-            if items["殖利率達門檻"] and items["在成分股內"] and not items["已持有"]:
-                comp.append({"代號": s, **items})
+            ok, items = today_gate(d, dates, thr, G["member"][s].iloc[p], s in pos, a.score_yield)
+            if items["殖利率達評分門檻"] and items["在成分股內"] and not items["已持有"]:
+                comp.append({"代號": s, "可買": ok, **items})
         comp = pd.DataFrame(comp)
-        sc_cand = score_rows(df, ref)
-        gates = {s: today_gate(G_cand[s], dates, thr, True, s in pos) for s in df["代號"]}
+        sc_cand = score_rows(df, ref, a.ref_weight)
+        gates = {s: today_gate(G_cand[s], dates, thr, True, s in pos, a.score_yield) for s in df["代號"]}
         sc_cand["今天可買"] = [gates[s][0] for s in sc_cand["代號"]]
-        sc_comp = score_rows(ref[ref["代號"].isin(comp["代號"])] if len(comp) else ref.iloc[0:0], ref) if len(comp) else pd.DataFrame()
+        sc_cand["距正式門檻%"] = [gates[s][1]["距正式門檻%"] for s in sc_cand["代號"]]
+        sc_comp = score_rows(ref[ref["代號"].isin(comp["代號"])], ref, a.ref_weight) if len(comp) else pd.DataFrame()
         if len(sc_comp):
-            sc_comp["今天可買"] = sc_comp["代號"].map(dict(zip(comp["代號"], (comp["連續5年賺錢"] & (comp["今日技術買訊"] | comp["接近買點"])))))
-        cols = ["代號", "名稱", "綜合分", "判定", "今天可買", "警示"] + [f"{c}百分位" for c in SCORE_ITEMS]
-        with pd.option_context("display.width", 320, "display.max_columns", 40, "display.unicode.east_asian_width", True):
-            print("\n【單筆機會評分】百分位＝在池內有成交過的股票中排第幾（50＝池子中位數；≥60 優於池子、<40 不如池子）")
-            print(sc_cand[cols].round(0).to_string(index=False))
+            sc_comp["今天可買"] = sc_comp["代號"].map(dict(zip(comp["代號"], comp["可買"])))
+            sc_comp["距正式門檻%"] = sc_comp["代號"].map(dict(zip(comp["代號"], comp["距正式門檻%"])))
+            sc_comp["留池"] = "已在池內"
+        cols = ["代號", "名稱", "綜合分", "判定", "認證等級", "留池", "今天可買", "距正式門檻%", "警示"] + [f"{c}百分位" for c in SCORE_ITEMS]
+        fmt = lambda x: x.round({"綜合分": 1, "距正式門檻%": 2}).round({f"{c}百分位": 0 for c in SCORE_ITEMS})
+        wname = "按成交次數加權" if a.ref_weight == "trades" else "每檔一票"
+        with pd.option_context("display.width", 340, "display.max_columns", 40, "display.unicode.east_asian_width", True):
+            print(f"\n【單筆機會評分】百分位＝在池內有成交過的股票中排第幾（{wname}；50＝池子一筆典型交易；≥60 優於池子、<40 不如池子）")
+            print(f"評分門檻：殖利率 ≥ {a.score_yield}%（正式買進門檻今天是 {thr[p]:.2f}%，「距正式門檻」為負表示還沒到、正式版不會買）")
+            print(fmt(sc_cand[cols]).to_string(index=False))
             print("\n【門檻逐項】")
             for s in df["代號"]:
                 print(f"  {s} {names.get(s, '')}: " + "、".join(f"{k}={v}" for k, v in gates[s][1].items()))
             if len(sc_comp):
-                print("\n【今天觀察名單上的競爭者】（池內、殖利率已達門檻、未持有；新股票要贏過它們才值得插隊）")
-                print(sc_comp.sort_values("綜合分", ascending=False)[cols].round(0).to_string(index=False))
+                print(f"\n【今天的競爭者】（池內、殖利率 ≥ {a.score_yield}%、未持有；新股票要贏過它們才值得插隊）")
+                print(fmt(sc_comp.sort_values("綜合分", ascending=False)[cols]).to_string(index=False))
             med = ref[ref["模擬筆數"] >= 1][list(SCORE_ITEMS)].median().round(1)
-            print("\n【池內中位數】" + "、".join(f"{k} {v}" for k, v in med.items()))
+            print("\n【池內中位數（每檔一票）】" + "、".join(f"{k} {v}" for k, v in med.items()))
         sc_cand.round(2).to_csv(RESULTS / f"stock_fit_{tag}_score.csv", index=False, encoding="utf-8-sig")
 
     if a.pool:

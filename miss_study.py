@@ -106,7 +106,7 @@ def main(which="main"):
         for sid, d in G["sub"].items():
             d["yield"] = Y[sid]
             if spec["miss"]:
-                d["miss"] = miss[(spec["est"], spec["miss"][0], sid)]
+                d["miss"] = miss[("A0" if spec["est"] == "A" else spec["est"], spec["miss"][0], sid)]   # A 公告前的推估＝A0
         Yall = pd.DataFrame({s: np.where(mem_all[s].values, Y[s], np.nan) for s in Y if s in mem_all}, index=dates)
         po._mk[("all", len(dates))] = (Yall.median(axis=1).values, Yall.std(axis=1).values, Yall.notna().sum(axis=1).values)
         po._applied.clear()

@@ -228,7 +228,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         start_n=1, end_n=None, lot_mode=None, hold_yield=None, hold_yield_floor=None, hold_yield_cap=None,
         defer_breakout=None, defer_reversal=None, defer_floor=0.05, add_reserve=None,
         tech_exit=None, tech_exit_profit=False, tranches=None, ledger=None, settle=None, time_add_trap=False, trap_ref="cost",
-        time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all"):
+        time_add_base="budget", deep_add_base="budget", rest=None, rest_gain=None, rest_mode="all",
+        win_add=None, win_add_max=1):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -267,6 +268,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     time_add_base / deep_add_base：加碼金額的計算基準。"budget"＝進場時的額度（總資產÷5，固定不變，預設）；
       "assets"＝加碼當天的總資產÷5；"position"＝加碼當天該部位的市值。再乘上 time_add_amount 或 ADDS 的比例。
     trap_ref：套牢的比較基準，"cost"＝平均成本（預設）、"first"＝首買價。
+    win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
+      且出現加碼訊號（爆量下影線／長紅）時，加碼「部位市值 × win_add」，每個部位最多 win_add_max 次。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
       mode "all"＝全部出清重來，"profit"＝只賣有賺的，"target"＝只賣獲利已達停利門檻的（不管殖利率）。
     ledger：傳入 list 時，每一筆成交（買進／加碼／賣出／追加資金）都記一列：日期、代號、動作、價格、股數、金額、
@@ -546,6 +549,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 hy_ = d[hold_yield][p] if isinstance(hold_yield, str) else hold_yield   # 字串＝每檔每日不同的門檻陣列
                 keep = (hold_yield is not None and not np.isnan(y) and not np.isnan(hy_) and y >= hy_
                         and not (hold_yield_cap is not None and gain >= hold_yield_cap))
+                # 信心續抱掛鉤：data[sid]["hold_keep"]（每日布林）為 True 時，殖利率已跌破門檻也先不賣
+                if not keep and "hold_keep" in d and d["hold_keep"][p]:
+                    keep = True
                 if keep:
                     pos["tp_hit"] = True
                 elif defer_breakout and d[defer_breakout][p] and not d[defer_reversal][p]:
@@ -594,6 +600,16 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
             avg_now = pos["cost"] / pos["shares"]
+            if (win_add and pos.get("tp_hit") and c_prev > avg_now and d["add"][p] and pos.get("win_adds", 0) < win_add_max
+                    and ("win_add_ok" not in d or d["win_add_ok"][p])):
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["shares"] * c_prev * win_add))
+                if invest > 0:
+                    pos["shares"] += invest * (1 - BUY_COST) / o
+                    pos["cost"] += invest
+                    pos["win_adds"] = pos.get("win_adds", 0) + 1
+                    cash -= invest
+                    log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"續抱加碼第{pos['win_adds']}次（部位市值 {win_add:.0%}）")
+                    continue
             if time_add_trap:
                 t0 = pos.get("trap_start")
                 due = (time_add_days and d["add"][p] and c_prev < avg_now and t0 is not None

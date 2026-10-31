@@ -278,22 +278,51 @@ def official_500(sub, member, dates, kw, start=START):
             "回撤%": 100 * (eq / eq.cummax() - 1).min(), "筆數": len(tr)}, tr
 
 
+def paired_from_files(base_tag, cur_tag):
+    """用 evaluate 存下的 is/oos runs 檔，算 cur 相對 base 的逐情境配對（好/平/差、中位差、最差差）。"""
+    out = {}
+    for suffix, keys, pre in (("is", ["起始", "追加"], "前7年"), ("oos", ["驗證", "起始", "追加"], "後3年")):
+        b = pd.read_csv(RESULTS / f"param_opt_{base_tag}_{suffix}_runs.csv").set_index(keys)["IRR"]
+        c = pd.read_csv(RESULTS / f"param_opt_{cur_tag}_{suffix}_runs.csv").set_index(keys)["IRR"]
+        d = (c - b).dropna().values
+        out[f"{pre}配對"] = f"{int((d > 0.05).sum())}/{int((np.abs(d) <= 0.05).sum())}/{int((d < -0.05).sum())}"
+        out[f"{pre}配對中位差"] = float(np.median(d)) if len(d) else np.nan
+        out[f"{pre}配對最差"] = float(d.min()) if len(d) else np.nan
+        out[f"{pre}好減差"] = int((d > 0.05).sum() - (d < -0.05).sum())
+    return out
+
+
+def keep_verdict(row, base):
+    """留池判定：三段平均不降（≥ −0.1）、標準差不升（≤ +0.1）、最差 10% 不降（≥ −0.3）、前 7 年配對好 ≥ 差。"""
+    checks = {"三段平均不降": row["三段平均"] - base["三段平均"] >= -0.1,
+              "標準差不升": row["標準差平均"] - base["標準差平均"] <= 0.1,
+              "最差10不降": row["最差10最小"] - base["最差10最小"] >= -0.3,
+              "配對好≥差": row.get("前7年好減差", 0) >= 0}
+    return ("可留池" if all(checks.values()) else "不留池"), "、".join(k for k, v in checks.items() if not v)
+
+
 def pool_test(cands, dates, t, cons, kw, names, label, fname):
     """cands: 候選代號清單；label 顯示用、fname 檔名用。回傳 (20 情境彙整列, 500 萬試算列)。"""
     G = rs.G
     base = {k: dict(G[k]) for k in ("sub", "member")}
     base_sig = {k: dict(v) for k, v in G["sig"].items()}
+    # 成分股期間一定要用「完整名單」算：membership() 的期間切點來自傳入名單的全部生效日，
+    # 只傳一檔會把它從首次入選一路算到最後（中間被剔除也算在內）。
+    if "full_member" not in G:
+        G["full_member"] = ps.membership(cons, dates)
     try:
         for sid in cands:
             d = build(sid, dates, t)
             G["sub"][sid] = d
-            G["member"][sid] = ps.membership(cons[cons["stock_id"] == sid], dates)[sid] if sid in set(cons["stock_id"]) \
-                else pd.Series(True, index=dates)
+            G["member"][sid] = G["full_member"][sid] if sid in G["full_member"] else pd.Series(True, index=dates)
             for k, v in po.ENTRIES.items():
                 G["sig"][v][sid] = d["sig"][v]
         po._applied["buy"] = None
         po.CONFIGS[label] = dr.FINAL
         m = po.evaluate([label], f"fit_{fname}").loc[label]
+        if (RESULTS / "param_opt_fit_base_is_runs.csv").exists():
+            for k_, v in paired_from_files("fit_base", f"fit_{fname}").items():
+                m[k_] = v
         po.apply(dr.FINAL)
         money, tr = official_500(G["sub"], G["member"], dates, kw)
         cand_tr = tr[tr["代號"].isin(cands)]
@@ -489,6 +518,58 @@ def main():
                 print(fmt(sc_comp.sort_values("綜合分", ascending=False)[cols]).to_string(index=False))
             med = ref[ref["模擬筆數"] >= 1][list(SCORE_ITEMS)].median().round(1)
             print("\n【池內中位數（每檔一票）】" + "、".join(f"{k} {v}" for k, v in med.items()))
+
+        # 結論一：單筆
+        best_comp = sc_comp[sc_comp["今天可買"]].sort_values("綜合分", ascending=False) if len(sc_comp) else pd.DataFrame()
+        single = {}
+        for _, r in sc_cand.iterrows():
+            if not r["今天可買"]:
+                g = gates[r["代號"]][1]
+                why = "殖利率未達評分門檻" if not g["殖利率達評分門檻"] else "近 5 年有虧損年度" if not g["連續5年賺錢"] \
+                    else "今天沒有技術買訊也不接近買點" if not (g["今日技術買訊"] or g["接近買點"]) else "已持有"
+                single[r["代號"]] = f"不買（{why}）"
+            elif pd.isna(r["綜合分"]) or r["綜合分"] < 50:
+                single[r["代號"]] = "不買（單筆品質不如池子）"
+            elif len(best_comp) and best_comp.iloc[0]["綜合分"] > r["綜合分"] + 0.5:
+                b = best_comp.iloc[0]
+                single[r["代號"]] = f"可買，但觀察名單的 {b['代號']}{b['名稱']}（{b['綜合分']:.0f} 分）更好"
+            else:
+                single[r["代號"]] = "可買"
+            if r["距正式門檻%"] is not None and not pd.isna(r["距正式門檻%"]) and r["距正式門檻%"] < 0 and r["今天可買"]:
+                single[r["代號"]] += f"；殖利率距正式門檻還差 {-r['距正式門檻%']:.2f}%，正式版今天不會買"
+        # 結論二：留池（等級適合且綜合分 ≥ 60 才測；自動加進 75 檔跑 20 情境＋後 3 年）
+        keep = {s: ("不留池（等級不是「適合」或綜合分 < 60）", None) for s in sc_cand["代號"]}
+        for s in sc_cand["代號"]:
+            if s in G["sub"]:
+                keep[s] = ("已在池內", None)
+        elig = [r["代號"] for _, r in sc_cand.iterrows()
+                if r["認證等級"] == "適合" and not pd.isna(r["綜合分"]) and r["綜合分"] >= 60 and r["代號"] not in G["sub"]]
+        pool_rows = {}
+        if elig:
+            print(f"\n留池測試：{', '.join(elig)} 各自加進 75 檔池跑 20 情境＋後 3 年（每檔約 1 分鐘）…", flush=True)
+            po.CONFIGS["正式版"] = dr.FINAL
+            po._applied["buy"] = None
+            base_row = po.evaluate(["正式版"], "fit_base").loc["正式版"]
+            po.apply(dr.FINAL)
+            pool_rows["正式版（75 檔）"] = base_row
+            for i, s in enumerate(elig, 1):
+                label = f"＋{s}{names.get(s, '')}"
+                row, _ = pool_test([s], dates, t, cons, kw, names, label, f"{tag}_keep{i}")
+                pool_rows[label] = row
+                v, fails = keep_verdict(row, base_row)
+                keep[s] = (v + (f"（{fails}）" if fails else ""), row)
+            out = pd.DataFrame(pool_rows).T
+            cols2 = ["三段平均", "最差10最小", "標準差平均", "前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差"]
+            cols2 = [c for c in cols2 if c in out.columns]
+            with pd.option_context("display.width", 320, "display.unicode.east_asian_width", True):
+                print("\n【留池測試】加進 75 檔後的 20 情境＋後 3 年（配對相對正式版）")
+                print(out[cols2].round(2).to_string())
+            out.round(3).to_csv(RESULTS / f"stock_fit_{tag}_keep.csv", encoding="utf-8-sig")
+        sc_cand["結論·單筆"] = sc_cand["代號"].map(single)
+        sc_cand["結論·留池"] = sc_cand["代號"].map({s: v[0] for s, v in keep.items()})
+        print("\n【結論】")
+        for _, r in sc_cand.iterrows():
+            print(f"  {r['代號']} {r['名稱']}：單筆 → {r['結論·單筆']}；留池 → {r['結論·留池']}")
         sc_cand.round(2).to_csv(RESULTS / f"stock_fit_{tag}_score.csv", index=False, encoding="utf-8-sig")
 
     if a.pool:

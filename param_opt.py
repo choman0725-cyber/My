@@ -125,6 +125,8 @@ def to_kw(cfg):
         kw["tranches"] = cfg["tranches"]
     if cfg.get("tech_exit"):
         kw.update(tech_exit=cfg["tech_exit"], tech_exit_profit=cfg["tech_profit"])
+    if cfg.get("topup"):
+        kw["topup"] = cfg["topup"]        # 2026-11-01 正式版 U1：賺錢部位買點再現補足
     return kw
 
 

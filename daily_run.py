@@ -22,7 +22,11 @@ import robust_study as rs
 from backtest import ROOT, SELL_COST
 
 FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0), "profit_years": 5,
-         "growth_rel": (1.25, 4.0, 750), "conf_first": (3, 0.8)}
+         "growth_rel": (1.25, 4.0, 750), "conf_first": (3, 0.8),
+         "topup": {"signal": True, "profit_only": True, "cash_min_first": True, "health_min": 0.8}}
+# topup（2026-11-01 使用者採用 U1）：持股「前一日收盤 ≥ 平均成本、當天再次符合完整買進條件、未套牢（虧 <30%）、仍在成分股」時，
+# 補到「當天可投資資產 ÷ 5 × 首買比例」（可投資資產＝現金＋未套牢持股市值），且補完後現金仍 ≥ 一筆首買金額；
+# 健康度（可投資資產 ÷ 總資產）< 0.8 時不補。虧損中的部位照舊走跌深／定期加碼（進場額度）。
 # 加碼維持「進場額度（進場當時總資產 ÷ 5）」的 30%/20%、定期 20%；市值基準 40%/25% 測過等價（results/add_marketvalue_*），
 # 但每日程式會直接印出金額，使用者 2026-10-31 決定維持額度基準
 # growth_rel=(k, gmed, window)：過去 750 日殖利率中位數 < 4% 的股票（成長股）改用「殖利率 ≥ 自己中位×1.25」買、「≥ 自己中位」續抱
@@ -40,6 +44,9 @@ RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣�
         （信心＝相對殖利率 0～2 ＋ 大盤 0～3 ＋ 近 20 日急漲急跌 1 ＋ 距 60 日高點 −15～−40% 1）
   加碼：收盤曾跌到首買價 -15% / -30% 後，出現爆量下影線或長紅且收盤仍低於首買價，加碼額度 30% / 20%
         持有每滿半年仍虧損、出現同樣訊號且收盤低於平均成本，再加碼額度 20%
+  補足（2026-11-01 起）：持股已賺錢（收盤 >= 平均成本）、當天再次符合完整買進條件、虧損未達 30%、仍在成分股時，
+        補到「當天可投資資產 ÷ 5 × 首買比例」（可投資資產＝現金＋虧損未達 30% 的持股市值）；補完後現金須仍 >= 一筆首買金額
+        可投資資產 ÷ 總資產 < 80% 時不補；虧損中的部位不適用，照舊走加碼規則
   賣出：收盤較平均成本獲利 >= 12% 且預估殖利率 < 4.75%（成長股：< 自己 3 年中位數；算不出殖利率視同跌破）
         近四季 EPS 合計轉負：隔天賣；被移出成分股後：出現爆量上影線／長黑且不賠錢就賣
   名額：虧損超過 30% 或持有超過 1 年的部位不佔 5 檔名額；被移出成分股的部位也不佔
@@ -136,7 +143,7 @@ def main():
             status.append("最新一天無報價，引擎暫不處理")
         rows.append(dict(代號=sid, 名稱=names.get(sid, ""), 進場=dates[q["start"]].date(), 持有日=held, 股數=round(q["shares"] * a.capital),
                          平均成本=round(avg, 1), 現價=px, 損益pct=round(100 * gain, 1), 市值萬=round(q["shares"] * px * a.capital / 1e4, 1),
-                         預估殖利率=None if np.isnan(y) else round(y, 2), 已加碼=q["adds"], 定期加碼=q.get("time_adds", 0),
+                         預估殖利率=None if np.isnan(y) else round(y, 2), 已加碼=q["adds"], 定期加碼=q.get("time_adds", 0), 補足=q.get("topups", 0),
                          首買價=round(q["first"], 1), 距首買pct=round(100 * (px / q["first"] - 1), 1), 狀態="；".join(status)))
     hold = pd.DataFrame(rows)
     with pd.option_context("display.width", 300, "display.max_columns", 30, "display.unicode.east_asian_width", True):
@@ -152,7 +159,10 @@ def main():
             q0, q1 = pos0[sid], pos1[sid]
             if q1["shares"] > q0["shares"] + 1e-12:
                 amt = (q1["cost"] - q0["cost"]) * a.capital
-                why = "定期加碼" if q1.get("time_adds", 0) > q0.get("time_adds", 0) else f"第 {q1['adds']} 次加碼"
+                if q1.get("topups", 0) > q0.get("topups", 0):
+                    why = "買點再現補足（賺錢部位補到當天額度）"
+                else:
+                    why = "定期加碼" if q1.get("time_adds", 0) > q0.get("time_adds", 0) else f"第 {q1['adds']} 次加碼"
                 acts.append(f"加碼 {sid} {names.get(sid, '')}：約 {amt / 1e4:,.1f} 萬（{why}）")
     for sid in pos1:
         if sid not in pos0:

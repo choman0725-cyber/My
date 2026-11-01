@@ -20,6 +20,19 @@
 
 `data/TAIEX.csv`（交易日曆）＝FinMind TaiwanStockPrice TAIEX；`data/SOX.csv`＝FinMind USStockPrice ^SOX；`data/2382*.csv`＝FinMind（單檔舊研究用）。
 
+### 其他 ETF 與資料庫（2026-10-31 新增）
+
+| 檔案 | 內容 | 來源 |
+|---|---|---|
+| constituents_0051.csv | 0051 元大中型100 歷年成分股（2006-08-31～，111 期、325 檔） | **非 FinMind**：元大每日 PCF（build_constituents_pcf.py --etf 0051） |
+| constituents_0052.csv | 0052 富邦科技 歷年成分股（2006-08-28～，102 期、134 檔，每期 34～72 檔） | **非 FinMind**：富邦投信每日基金投資組合頁（build_constituents_fubon.py），5,265 個交易日全部抓取、0 失敗；2023-12、2026-09 兩次審核與新聞報導一致 |
+| prices/0050、0051、0052、0056.csv | ETF 本身的價格（含 0050 2025-06-18 一拆四、0052 2025-11-26 一拆七） | FinMind |
+| prices/00679B、00687B、00719B.csv | 債券 ETF（元大美債20年、國泰20年美債、元大美債1-3） | FinMind |
+
+正式版回測只讀 constituents.csv（0050＋0056），不受 0051、0052 影響。
+
+**SQLite 資料庫**：`python build_db.py` 由上面所有 CSV 產生 `data/market.db`（不進 git）。所有 ETF 的成分股併成同一張 `constituents` 表（etf 欄位區分），另有 prices、eps、dividend、dividend_result、share_events、index_prices（TAIEX、SOX）、securities，以及 view `constituent_days`（每期起訖日）。各表有主鍵，重複資料無法寫入。
+
 ## 成分股
 
 - 2006-01-02（0050）／2007-12-26（0056）～2015：由元大每日 PCF 重建（build_constituents_pcf.py），方法與異動表見 constituents_notes.md 文末；抽查 34 份 PCF 全部相符（VERIFY_REPORT.md §6）。

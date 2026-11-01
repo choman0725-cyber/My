@@ -340,7 +340,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       "newmoney"＝選項 4：追加資金當天，新錢優先補「殖利率仍達門檻（data[sid]["yield_ok"]）、未套牢、成本低於當天額度 × 首買比例」
         的持股（殖利率最高者優先），沒有才留現金；
       "ratchet"＝選項 1：跌深／定期加碼的基準改為 max(進場額度, 當天可投資資產 ÷ 5)。
-      "health_min"＝健康度門檻：健康度＝可投資資產 ÷ 總資產（套牢股佔越多越低），低於門檻時以上三種動作都不做，等帳戶恢復。
+      "track"＝額度跟著可投資資產走（2026-11-01 使用者）：每天把未套牢持股的額度更新為「當天可投資資產 ÷ 5」，跌深／定期加碼都用它；
+        一旦套牢（虧超過 trap_loss）就不再更新，凍結在套牢前最後一次的值；健康度低於門檻時也不更新。
+      "cash_min_first"＝True 時，買點再現補足只在「補完後現金仍 ≥ 一筆首買金額（當天額度 × 首買比例）」時才做，避免吃掉新買點的錢。
+      "health_min"＝健康度門檻：健康度＝可投資資產 ÷ 總資產（套牢股佔越多越低），低於門檻時以上動作都不做，等帳戶恢復。
       "min_amt"＝最小補足金額（占總資產比例，預設 1%）；"trap_loss" 預設 −0.30。
     first_split=(keep, wait, expire)：進場節奏。首買只先買「首買金額 × keep」，剩下的錢保留，等該股在 wait 個交易日內再出現
       技術買點／加碼訊號時補進；到期沒出現：expire="add"＝直接補、"drop"＝不補（錢回到一般現金）。保留的錢仍可被其他新買點用掉。
@@ -686,6 +689,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         close_out(s_, n, o_, f"定期結算·補虧{pl:+.4f}")
                         sold_today.add(s_)
             realized[0] = 0.0
+        if TU.get("track") and positions:
+            inv_t = investable(p); tot_t = cash + pos_value(p)
+            if tot_t > 0 and inv_t / tot_t >= TU.get("health_min", 0.0):
+                for s_, q in positions.items():
+                    if not is_trapped(s_, q, p):
+                        q["budget"] = inv_t / MAX_SLOTS
         for sid in list(positions):
             if sid not in positions:
                 continue
@@ -935,6 +944,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     if s_ in sold_today or is_trapped(s_, q, p) or not mem.get(s_, no)[p] or not data[s_]["buy"][p]:
                         continue
                     room = topup_target(s_, p, inv_) - q["cost"]
+                    if TU.get("cash_min_first") and cash - room < inv_ / MAX_SLOTS * first:
+                        continue
                     if room >= TU.get("min_amt", 0.01) * tot_:
                         do_topup(s_, n, room, f"買點再現補到當天額度（可投資資產 {inv_:.3f}，健康度 {inv_ / tot_:.0%}）")
         if hedge_index is not None and hedge_mode == "cashlevel":

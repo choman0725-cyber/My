@@ -25,6 +25,17 @@ def main():
     po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
     variants = {
         "正式版 E＋D": {},
+        "T1 額度跟隨可投資資產·套牢凍結": {"topup": {"track": True, "health_min": H}},
+        "T2 O2 補足＋額度跟隨": {"topup": {"signal": True, "track": True, "health_min": H}},
+        "T3 O2＋O4＋額度跟隨": {"topup": {"signal": True, "newmoney": True, "track": True, "health_min": H}},
+        "T4 T2＋現金>一筆首買才補": {"topup": {"signal": True, "track": True, "cash_min_first": True, "health_min": H}},
+        "T5 T3＋現金>一筆首買才補": {"topup": {"signal": True, "newmoney": True, "track": True, "cash_min_first": True, "health_min": H}},
+        "O2 買點再現補足（上一輪）": {"topup": {"signal": True, "health_min": H}},
+        "O2＋O4（上一輪）": {"topup": {"signal": True, "newmoney": True, "health_min": H}},
+    }
+    if "--all" not in __import__("sys").argv:
+        variants.pop("__none__", None)
+    _old = {
         "O1 棘輪·健康度0.8（對照）": {"topup": {"ratchet": True, "health_min": H}},
         "O2 買點再現補足·健康度0.8": {"topup": {"signal": True, "health_min": H}},
         "O4 新錢優先補舊持股·健康度0.8": {"topup": {"newmoney": True, "health_min": H}},
@@ -34,6 +45,9 @@ def main():
         "O2 不設健康度": {"topup": {"signal": True, "health_min": 0.0}},
         "O1＋O2＋O4·健康度0.8": {"topup": {"ratchet": True, "signal": True, "newmoney": True, "health_min": H}},
     }
+    if "--all" in __import__("sys").argv:
+        variants.update(_old)
+    tag = "bgt" if "--all" not in __import__("sys").argv else "bg"
     s17 = d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     sub = d[s17 + 1:]; months = pd.Series(sub, index=sub).groupby([sub.year, sub.month]).first(); midx = [d.get_loc(t) for t in months.values]
     rows = []
@@ -56,15 +70,15 @@ def main():
                                  買點再現補足次=n_sig, 買點再現補足萬=amt_sig, 新錢補足次=n_new, 新錢補足萬=amt_new,
                                  資金使用率=round(eq.attrs["資金使用率%"])))
         print(f"  {name} 500 萬完成", flush=True)
-    mon = pd.DataFrame(rows); mon.to_csv(RESULTS / "budget_growth_money.csv", index=False, encoding="utf-8-sig")
+    mon = pd.DataFrame(rows); mon.to_csv(RESULTS / f"budget_growth_{tag}_money.csv", index=False, encoding="utf-8-sig")
     _to_kw = po.to_kw; res = {}
     try:
         for i, (name, extra) in enumerate(variants.items()):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
             po.CONFIGS[name] = dr.FINAL
-            m = po.evaluate([name], f"bg_{i}").loc[name]
+            m = po.evaluate([name], f"{tag}_{i}").loc[name]
             if i:
-                for k_, v in paired_from_files("bg_0", f"bg_{i}").items():
+                for k_, v in paired_from_files(f"{tag}_0", f"{tag}_{i}").items():
                     m[k_] = v
             res[name] = m
             print(f"  {name} 20 情境完成：三段 {m['三段平均']:.2f}", flush=True)
@@ -72,7 +86,7 @@ def main():
         po.to_kw = _to_kw
     out = pd.DataFrame(res).T
     show = [c for c in ["前7年", "前7年最差10", "前7年回撤", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "前7年配對", "後3年配對"] if c in out.columns]
-    out[show].round(2).to_csv(RESULTS / "budget_growth_eval.csv", encoding="utf-8-sig")
+    out[show].round(2).to_csv(RESULTS / f"budget_growth_{tag}_eval.csv", encoding="utf-8-sig")
     with pd.option_context("display.width", 320, "display.max_rows", 100, "display.max_columns", 40, "display.unicode.east_asian_width", True):
         print("\n20 情境＋後 3 年（配對相對正式版）"); print(out[show].round(2).to_string())
         print("\n500 萬"); print(mon.to_string())

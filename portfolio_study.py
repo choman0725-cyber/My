@@ -342,6 +342,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       "ratchet"＝選項 1：跌深／定期加碼的基準改為 max(進場額度, 當天可投資資產 ÷ 5)。
       "track"＝額度跟著可投資資產走（2026-11-01 使用者）：每天把未套牢持股的額度更新為「當天可投資資產 ÷ 5」，跌深／定期加碼都用它；
         一旦套牢（虧超過 trap_loss）就不再更新，凍結在套牢前最後一次的值；健康度低於門檻時也不更新。
+      "profit_only"＝True（2026-11-01 使用者）：新規則只適用有獲利的部位——買點再現補足、新錢補足只補「前一日收盤 ≥ 平均成本」的持股；
+        虧損中的部位一律走舊規則（跌深／定期加碼用進場額度，不補足）。
       "cash_min_first"＝True 時，買點再現補足只在「補完後現金仍 ≥ 一筆首買金額（當天額度 × 首買比例）」時才做，避免吃掉新買點的錢。
       "health_min"＝健康度門檻：健康度＝可投資資產 ÷ 總資產（套牢股佔越多越低），低於門檻時以上動作都不做，等帳戶恢復。
       "min_amt"＝最小補足金額（占總資產比例，預設 1%）；"trap_loss" 預設 −0.30。
@@ -578,7 +580,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     money = contributions[n]
                     cands_ = sorted([(data[s_]["yield"][p], s_) for s_, q in positions.items()
                                      if not is_trapped(s_, q, p) and mem.get(s_, no)[p] and data[s_].get("yield_ok", no)[p]
-                                     and q["cost"] < topup_target(s_, p, inv_) and not np.isnan(data[s_]["open"][n])], reverse=True)
+                                     and q["cost"] < topup_target(s_, p, inv_) and not np.isnan(data[s_]["open"][n])
+                                     and not (TU.get("profit_only") and data[s_]["close_ff"][p] < q["cost"] / q["shares"])], reverse=True)
                     for _, s_ in cands_:
                         room = topup_target(s_, p, inv_) - positions[s_]["cost"]
                         amt = min(room, money)
@@ -942,6 +945,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 for s_ in sorted(positions, key=lambda x: -np.nan_to_num(data[x]["yield"][p], nan=-1)):
                     q = positions[s_]
                     if s_ in sold_today or is_trapped(s_, q, p) or not mem.get(s_, no)[p] or not data[s_]["buy"][p]:
+                        continue
+                    if TU.get("profit_only") and data[s_]["close_ff"][p] < q["cost"] / q["shares"]:
                         continue
                     room = topup_target(s_, p, inv_) - q["cost"]
                     if TU.get("cash_min_first") and cash - room < inv_ / MAX_SLOTS * first:

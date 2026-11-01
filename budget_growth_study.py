@@ -25,6 +25,13 @@ def main():
     po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
     variants = {
         "正式版 E＋D": {},
+        "U1 只補賺錢部位＋現金>一筆首買": {"topup": {"signal": True, "profit_only": True, "cash_min_first": True, "health_min": H}},
+        "U2 只補賺錢部位（無現金底線）": {"topup": {"signal": True, "profit_only": True, "health_min": H}},
+        "U3 U1＋新錢先補賺錢持股": {"topup": {"signal": True, "newmoney": True, "profit_only": True, "cash_min_first": True, "health_min": H}},
+        "T4 上一輪（虧損部位也補）": {"topup": {"signal": True, "track": True, "cash_min_first": True, "health_min": H}},
+    }
+    if "--round2" in __import__("sys").argv:
+        variants.update({
         "T1 額度跟隨可投資資產·套牢凍結": {"topup": {"track": True, "health_min": H}},
         "T2 O2 補足＋額度跟隨": {"topup": {"signal": True, "track": True, "health_min": H}},
         "T3 O2＋O4＋額度跟隨": {"topup": {"signal": True, "newmoney": True, "track": True, "health_min": H}},
@@ -32,7 +39,7 @@ def main():
         "T5 T3＋現金>一筆首買才補": {"topup": {"signal": True, "newmoney": True, "track": True, "cash_min_first": True, "health_min": H}},
         "O2 買點再現補足（上一輪）": {"topup": {"signal": True, "health_min": H}},
         "O2＋O4（上一輪）": {"topup": {"signal": True, "newmoney": True, "health_min": H}},
-    }
+        })
     if "--all" not in __import__("sys").argv:
         variants.pop("__none__", None)
     _old = {
@@ -47,7 +54,7 @@ def main():
     }
     if "--all" in __import__("sys").argv:
         variants.update(_old)
-    tag = "bgt" if "--all" not in __import__("sys").argv else "bg"
+    tag = "bgu" if "--round2" not in __import__("sys").argv and "--all" not in __import__("sys").argv else ("bgt" if "--all" not in __import__("sys").argv else "bg")
     s17 = d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     sub = d[s17 + 1:]; months = pd.Series(sub, index=sub).groupby([sub.year, sub.month]).first(); midx = [d.get_loc(t) for t in months.values]
     rows = []

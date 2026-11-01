@@ -9,3 +9,6 @@ data/universe/_fubon_cache/
 data/market.db
 data/market.db.tmp
 *.zip
+
+# 個人實際持股（daily_run --holdings），不進 git
+my_holdings*.csv

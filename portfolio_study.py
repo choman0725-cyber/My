@@ -272,7 +272,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None):
+        topup=None, init_positions=None, init_cash=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -388,10 +388,15 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       immediate＝隔天開盤就賣；breakeven＝扣成本後不虧就賣；half_target＝獲利 10% 就賣；
       tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣；
       tech_profit＝有獲利（扣成本後不虧）且出現價量／引線賣訊才賣，虧損時續抱（仍可等 +20% 停利）。
-    使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。"""
+    使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。
+    init_positions／init_cash：從實際持股起算（daily_run --holdings）。{代號: 部位 dict（同引擎內部格式，金額以 capital 為 1）}
+      與起始現金（同單位）；預設 None＝從全現金 1.0 起跑。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
+    if init_positions is not None:
+        positions = {k: dict(v) for k, v in init_positions.items()}
+        cash = init_cash
     last_buy_n = -10 ** 9
     # 閒錢部位狀態
     H = {"val": 0.0, "cost": 0.0, "cool": -1, "liq": False, "start": None, "armed": hedge_from == "start", "deposits": 0, "idle_run": 0,

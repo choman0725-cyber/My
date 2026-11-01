@@ -8,6 +8,7 @@
   python daily_run.py --capital 5000000 --start 2024-01-02 --contrib 2025:1000000,2026:1000000
   python daily_run.py --asof 2026-06-30                  # 假裝今天是 2026-06-30（回看當時的建議）
   python daily_run.py --capital 13780000 --start 2026-10-16 --monthly 100000 --monthly-from 2026-12   # 每月第一個交易日追加 10 萬
+  python daily_run.py --holdings my_holdings.csv --cash 11575363   # 從實際持股起算（只算明天要做的事；檔案格式見 load_holdings）
 資料更新：data/universe/prices/*.csv、eps_all.csv、dividend_all.csv 更新後先重跑
   python portfolio_electronics.py 以重建 results/portfolio_prepared.pkl，再執行本程式。
 """
@@ -88,12 +89,43 @@ def monthly_contrib(dates, s_n, amount, capital, start_month, last_is_fake=False
     return {i: amount / capital for i in range(s_n + 1, len(dates)) if per[i] >= m0 and per[i] != per[i - 1]}
 
 
+def load_holdings(path, cash, G):
+    """讀實際持股 CSV，換成引擎部位格式（金額以 capital＝現金＋持股成本 為 1）。
+    欄位：代號、進場日、股數、成本（含手續費總金額）；選填：首買價、加碼次數（跌深加碼已做幾次）、定期加碼次數、額度（進場當時總資產÷5）。
+    推算：首買價預設＝成本÷股數；額度預設＝成本 ÷（訊號日首買比例＋已做的跌深加碼比例）；
+    最低價、已跌破的加碼階數、是否曾移出成分股、是否曾達停利門檻由進場後的歷史價格推算。"""
+    h = pd.read_csv(path, dtype={"代號": str})
+    dates, last = G["dates"], len(G["dates"]) - 1
+    capital = cash + float(h["成本"].sum())
+    pos = {}
+    for _, r in h.iterrows():
+        sid = r["代號"]
+        if sid not in G["sub"]:
+            raise SystemExit(f"{sid} 不在股票池（{len(G['sub'])} 檔），引擎無法處理")
+        d = G["sub"][sid]
+        st = dates.get_indexer([pd.Timestamp(r["進場日"])], method="bfill")[0]
+        cost, shares = float(r["成本"]), float(r["股數"])
+        first = float(r["首買價"]) if "首買價" in h and pd.notna(r["首買價"]) else cost / shares
+        adds = int(r["加碼次數"]) if "加碼次數" in h and pd.notna(r["加碼次數"]) else 0
+        fr = d["first_frac"][st - 1] if "first_frac" in d else FINAL["first"]
+        budget = float(r["額度"]) if "額度" in h and pd.notna(r["額度"]) else cost / (fr + sum(ps.ADDS[:adds]))
+        cmin = np.nanmin(d["close_ff"][st:last + 1])
+        pos[sid] = {"start": st, "first": first, "shares": shares / capital, "cost": cost / capital, "budget": budget / capital,
+                    "adds": adds, "hit": sum(cmin / first - 1 <= x for x in ps.ADD_STEPS), "low": np.nanmin(d["low"][st:last + 1]),
+                    "removed": not G["member"][sid].iloc[st:last + 1].all(), "zone": None,
+                    "tp_hit": bool(np.nanmax(d["close_ff"][st:last + 1]) * shares / cost - 1 >= FINAL["target"]),
+                    "time_adds": int(r["定期加碼次數"]) if "定期加碼次數" in h and pd.notna(r["定期加碼次數"]) else 0}
+    return capital, pos, cash / capital
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capital", type=float, default=5_000_000)
     ap.add_argument("--start", default="2017-01-03")
     ap.add_argument("--contrib", default="", help="每年追加，例如 2018:500000,2019:500000")
     ap.add_argument("--asof", default=None, help="只用到這天為止的資料")
+    ap.add_argument("--holdings", default=None, help="實際持股 CSV：從實際持股起算，只算明天要做的事（格式見 load_holdings）")
+    ap.add_argument("--cash", type=float, default=None, help="搭配 --holdings：目前可用現金（元）")
     ap.add_argument("--monthly", type=float, default=0, help="每月追加金額（每月第一個交易日開盤前），例如 100000")
     ap.add_argument("--monthly-from", default=None, help="每月追加從這個月開始，例如 2026-12（預設起跑當月的下個月份起）")
     a = ap.parse_args()
@@ -114,6 +146,11 @@ def main():
         po._mk.clear()
     po.apply(FINAL); kw = po.to_kw(FINAL)
     dates = G["dates"]
+    if a.holdings:
+        if a.cash is None:
+            raise SystemExit("--holdings 需要搭配 --cash（目前可用現金）")
+        a.capital, init_pos, init_cash = load_holdings(a.holdings, a.cash, G)
+        a.start = str(dates[-1].date())
     s_n = dates.get_indexer([pd.Timestamp(a.start)], method="bfill")[0]
     sched = {int(y): float(v) for y, v in (x.split(":") for x in a.contrib.split(",") if x)}
     first_day = {y: dates.get_indexer([dates[dates.year == y][0]])[0] for y in sched if (dates.year == y).any()}
@@ -123,8 +160,13 @@ def main():
     if a.monthly:
         mc, contrib = monthly_contrib(dates, s_n, a.monthly, a.capital, a.monthly_from), contrib or {}
         contrib = {k: contrib.get(k, 0) + mc.get(k, 0) for k in set(contrib) | set(mc)} or None
-    tr, eq = ps.run(G["sub"], G["member"], dates, capital=a.capital, contributions=contrib, start_n=s_n, **kw)
-    pos0, cash0 = eq.attrs["positions"], eq.attrs["cash"]
+    if a.holdings:      # 實際持股＝今天收盤後的狀態，不重跑歷史
+        pos0, cash0 = init_pos, init_cash
+        value = (cash0 + sum(q["shares"] * G["sub"][s_]["close_ff"][-1] for s_, q in pos0.items())) * a.capital
+    else:
+        tr, eq = ps.run(G["sub"], G["member"], dates, capital=a.capital, contributions=contrib, start_n=s_n, **kw)
+        pos0, cash0 = eq.attrs["positions"], eq.attrs["cash"]
+        value = eq.iloc[-1] * a.capital
     # 2. 加虛擬日再跑 → 明天的動作
     dates2, sub2, member2 = extend_one_day(G)
     contrib2 = contrib
@@ -132,14 +174,18 @@ def main():
         m2 = monthly_contrib(dates2, s_n, a.monthly, a.capital, a.monthly_from, last_is_fake=True)
         if len(dates2) - 1 in m2:
             contrib2 = {**(contrib or {}), len(dates2) - 1: m2[len(dates2) - 1]}
-    tr2, eq2 = ps.run(sub2, member2, dates2, capital=a.capital, contributions=contrib2, start_n=s_n, **kw)
+    if a.holdings:      # 只跑虛擬的下一個交易日
+        tr2, eq2 = ps.run(sub2, member2, dates2, capital=a.capital, contributions=contrib2, start_n=len(dates2) - 1,
+                          init_positions=pos0, init_cash=cash0, **kw)
+    else:
+        tr2, eq2 = ps.run(sub2, member2, dates2, capital=a.capital, contributions=contrib2, start_n=s_n, **kw)
     pos1, cash1 = eq2.attrs["positions"], eq2.attrs["cash"]
 
     names = pd.read_csv(ROOT / "data" / "universe" / "constituents.csv", dtype=str).drop_duplicates("stock_id").set_index("stock_id")["name"]
     last = dates[-1]; p = len(dates) - 1
-    value = eq.iloc[-1] * a.capital
     print(RULE_TEXT)
-    print(f"\n資料最後日期：{last.date()}　起始 {dates[s_n].date()}　投入 {a.capital / 1e4:,.0f} 萬"
+    print(f"\n資料最後日期：{last.date()}　" + (f"實際持股（{a.holdings}）＋現金 {a.cash / 1e4:,.0f} 萬" if a.holdings else
+          f"起始 {dates[s_n].date()}　投入 {a.capital / 1e4:,.0f} 萬")
           + (f"＋追加 {sum(sched.values()) / 1e4:,.0f} 萬" if sched else "")
           + (f"＋每月 {a.monthly / 1e4:,.0f} 萬（{a.monthly_from or '起跑次月'} 起，至今已入 {len(monthly_contrib(dates, s_n, a.monthly, a.capital, a.monthly_from)) * a.monthly / 1e4:,.0f} 萬）" if a.monthly else ""))
     print(f"目前總資產 {value / 1e4:,.0f} 萬（現金 {cash0 * a.capital / 1e4:,.0f} 萬，{100 * cash0 * a.capital / value:.0f}%）")

@@ -7,6 +7,7 @@
   python daily_run.py                                    # 500 萬、2017-01 起、不追加
   python daily_run.py --capital 5000000 --start 2024-01-02 --contrib 2025:1000000,2026:1000000
   python daily_run.py --asof 2026-06-30                  # 假裝今天是 2026-06-30（回看當時的建議）
+  python daily_run.py --capital 13780000 --start 2026-10-16 --monthly 100000 --monthly-from 2026-12   # 每月第一個交易日追加 10 萬
 資料更新：data/universe/prices/*.csv、eps_all.csv、dividend_all.csv 更新後先重跑
   python portfolio_electronics.py 以重建 results/portfolio_prepared.pkl，再執行本程式。
 """
@@ -78,12 +79,23 @@ def extend_one_day(G):
     return dates2, sub2, member2
 
 
+def monthly_contrib(dates, s_n, amount, capital, start_month, last_is_fake=False):
+    """每月第一個交易日開盤前追加 amount（起跑日當天不算）。last_is_fake：最後一天是虛擬的「下一個交易日」，月份用下一個營業日判斷。"""
+    per = list(dates.to_period("M"))
+    if last_is_fake:
+        per[-1] = (dates[-2] + pd.offsets.BDay(1)).to_period("M")
+    m0 = pd.Period(start_month, "M") if start_month else per[s_n]
+    return {i: amount / capital for i in range(s_n + 1, len(dates)) if per[i] >= m0 and per[i] != per[i - 1]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--capital", type=float, default=5_000_000)
     ap.add_argument("--start", default="2017-01-03")
     ap.add_argument("--contrib", default="", help="每年追加，例如 2018:500000,2019:500000")
     ap.add_argument("--asof", default=None, help="只用到這天為止的資料")
+    ap.add_argument("--monthly", type=float, default=0, help="每月追加金額（每月第一個交易日開盤前），例如 100000")
+    ap.add_argument("--monthly-from", default=None, help="每月追加從這個月開始，例如 2026-12（預設起跑當月的下個月份起）")
     a = ap.parse_args()
 
     po.setup(); G = rs.G
@@ -108,11 +120,19 @@ def main():
     contrib = {first_day[y]: sched[y] / a.capital for y in first_day} or None
 
     # 1. 跑到最新資料日 → 目前狀態
+    if a.monthly:
+        mc, contrib = monthly_contrib(dates, s_n, a.monthly, a.capital, a.monthly_from), contrib or {}
+        contrib = {k: contrib.get(k, 0) + mc.get(k, 0) for k in set(contrib) | set(mc)} or None
     tr, eq = ps.run(G["sub"], G["member"], dates, capital=a.capital, contributions=contrib, start_n=s_n, **kw)
     pos0, cash0 = eq.attrs["positions"], eq.attrs["cash"]
     # 2. 加虛擬日再跑 → 明天的動作
     dates2, sub2, member2 = extend_one_day(G)
-    tr2, eq2 = ps.run(sub2, member2, dates2, capital=a.capital, contributions=contrib, start_n=s_n, **kw)
+    contrib2 = contrib
+    if a.monthly:
+        m2 = monthly_contrib(dates2, s_n, a.monthly, a.capital, a.monthly_from, last_is_fake=True)
+        if len(dates2) - 1 in m2:
+            contrib2 = {**(contrib or {}), len(dates2) - 1: m2[len(dates2) - 1]}
+    tr2, eq2 = ps.run(sub2, member2, dates2, capital=a.capital, contributions=contrib2, start_n=s_n, **kw)
     pos1, cash1 = eq2.attrs["positions"], eq2.attrs["cash"]
 
     names = pd.read_csv(ROOT / "data" / "universe" / "constituents.csv", dtype=str).drop_duplicates("stock_id").set_index("stock_id")["name"]
@@ -120,7 +140,8 @@ def main():
     value = eq.iloc[-1] * a.capital
     print(RULE_TEXT)
     print(f"\n資料最後日期：{last.date()}　起始 {dates[s_n].date()}　投入 {a.capital / 1e4:,.0f} 萬"
-          + (f"＋追加 {sum(sched.values()) / 1e4:,.0f} 萬" if sched else ""))
+          + (f"＋追加 {sum(sched.values()) / 1e4:,.0f} 萬" if sched else "")
+          + (f"＋每月 {a.monthly / 1e4:,.0f} 萬（{a.monthly_from or '起跑次月'} 起，至今已入 {len(monthly_contrib(dates, s_n, a.monthly, a.capital, a.monthly_from)) * a.monthly / 1e4:,.0f} 萬）" if a.monthly else ""))
     print(f"目前總資產 {value / 1e4:,.0f} 萬（現金 {cash0 * a.capital / 1e4:,.0f} 萬，{100 * cash0 * a.capital / value:.0f}%）")
     med, sd, cnt = po.market_stats("all"); thr = po.buy_threshold(FINAL)
     print(f"今日全成分股預估殖利率中位數 {med[p]:.2f}%（{cnt[p]} 檔有預估值，標準差 {sd[p]:.2f}）→ 買進門檻 {thr[p]:.2f}%")

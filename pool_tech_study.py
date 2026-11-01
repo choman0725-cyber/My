@@ -6,7 +6,10 @@
 市場中位數門檻照舊用 0050＋0056 全部成分股。注意：產業分類是今天的分類、挑「科技」本身帶有事後之見（近年半導體、AI 伺服器大漲）。
 用法：python pool_tech_study.py　輸出：results/pool_tech_eval.csv、pool_tech_money.csv
      python pool_tech_study.py hist：2006 起快取，每年 1 月起跑、算到 2016 年底（AI 行情之前，檢查是否只是事後挑中近年強勢產業）
-       與算到最新　輸出：results/pool_tech_hist.csv"""
+       與算到最新　輸出：results/pool_tech_hist.csv
+     python pool_tech_study.py add [hist]：以「半導體＋電腦及週邊」47 檔為基準，分別加回零組件／通信／其他電子、三類全加
+       （配對相對 47 檔）　輸出：results/pool_tech_add_*.csv"""
+import sys
 import numpy as np
 import pandas as pd
 
@@ -26,6 +29,15 @@ POOLS = {"正式版（電子 91 檔）": None,
          "半導體＋電腦＋零組件＋通信": set(IND.index[IND.isin(CORE)]),
          "半導體＋電腦及週邊": set(IND.index[IND.isin({"半導體業", "電腦及週邊設備業"})]),
          "只有半導體": set(IND.index[IND == "半導體業"])}
+SC = {"半導體業", "電腦及週邊設備業"}
+POOLS_ADD = {"半導體＋電腦（47 檔）": set(IND.index[IND.isin(SC)]),
+             "＋電子零組件": set(IND.index[IND.isin(SC | {"電子零組件業"})]),
+             "＋通信網路": set(IND.index[IND.isin(SC | {"通信網路業"})]),
+             "＋其他電子": set(IND.index[IND.isin(SC | {"其他電子業"})]),
+             "＋三類全加": set(IND.index[IND.isin(SC | {"電子零組件業", "通信網路業", "其他電子業"})])}
+OUT = "pool_tech"
+if "add" in sys.argv:
+    POOLS, OUT = POOLS_ADD, "pool_tech_add"
 
 
 def restrict(G, full, pool):
@@ -56,7 +68,7 @@ def hist():
                              至2016年底回撤=round(100 * (q16 / q16.cummax() - 1).min(), 1),
                              至今IRR=round(irr([CAPITAL], [d[s]], eq.iloc[-1] / eq.iloc[0] * CAPITAL, d[-1]), 1), 至今萬=round(eq.iloc[-1] / eq.iloc[0] * CAPITAL / 1e4)))
         print(f"  {name} 完成", flush=True)
-    t = pd.DataFrame(rows); t.to_csv(RESULTS / "pool_tech_hist.csv", index=False, encoding="utf-8-sig")
+    t = pd.DataFrame(rows); t.to_csv(RESULTS / f"{OUT}_hist.csv", index=False, encoding="utf-8-sig")
     base = t[t["版本"] == next(iter(POOLS))].set_index("起跑")
     summ = {}
     for name, g in t.groupby("版本", sort=False):
@@ -69,7 +81,6 @@ def hist():
 
 
 def main():
-    import sys
     if "hist" in sys.argv:
         return hist()
     po.setup(); G = rs.G; dates = G["dates"]
@@ -96,7 +107,7 @@ def main():
     out = pd.DataFrame(results).T
     show = [c for c in ["檔數", "前7年", "前7年最差10", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差"] if c in out.columns]
     mon = pd.DataFrame(money).T
-    out[show].to_csv(RESULTS / "pool_tech_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / "pool_tech_money.csv", encoding="utf-8-sig")
+    out[show].to_csv(RESULTS / f"{OUT}_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / f"{OUT}_money.csv", encoding="utf-8-sig")
     for f in RESULTS.glob("param_opt_pooltech_*"):
         f.unlink()
     with pd.option_context("display.width", 340, "display.max_rows", 100, "display.unicode.east_asian_width", True):

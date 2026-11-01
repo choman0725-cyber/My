@@ -176,12 +176,14 @@ def apply(cfg):
         prof = {}
         for sid, d in G["sub"].items():
             y = d["yield"]
-            d["buy"] = sig[sid] & ~np.isnan(thr) & (np.nan_to_num(y, nan=-1) >= thr)
+            yok = ~np.isnan(thr) & (np.nan_to_num(y, nan=-1) >= thr)
+            d["buy"] = sig[sid] & yok
             if cfg.get("profit_years"):
                 prof[sid] = ps.profit_years_flag(d.get("annual_eps"), G["dates"], cfg["profit_years"])
                 d["buy"] &= prof[sid]
             else:
                 prof[sid] = np.ones(len(G["dates"]), bool)
+            d["yield_ok"] = yok & prof[sid]        # 殖利率達門檻＋5 年賺錢，不含技術買點（額度補足研究用）
             if hy is not None:
                 d["hy_rel"] = hy
             d.pop("first_frac", None)
@@ -193,6 +195,7 @@ def apply(cfg):
             for sid, (buy, hyr, growth, ratio, med) in res.items():
                 d = G["sub"][sid]
                 d["buy"], d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = buy, hyr, growth, ratio, med
+                d["yield_ok"] = np.where(growth, (np.nan_to_num(ratio, nan=0) >= gk) & prof[sid], d["yield_ok"])
         if cfg.get("conf_first"):
             import rules_ext
             hi, frac = cfg["conf_first"]

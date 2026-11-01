@@ -271,7 +271,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_index=None, hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_min=0.01, hedge_cost=0.001,
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
-        hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale"):
+        hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
+        topup=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -333,6 +334,14 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     hedge_mode="cashlevel"（使用者 2026-11-01 第三版）：觸發條件改成「現金 > hedge_reserve ×（現金＋未套牢持股市值）」，套牢股不計
       （hedge_trap="stale"＝正式版不佔名額的定義：虧損 >30% 或持有 >1 年；"deep"＝只算虧損 >30%）。成立後等 hedge_wait 個交易日
       （0＝當天），期間沒買進且條件仍成立 → 投入現金 × hedge_frac（hedge_frac=None＝只投入超過門檻的部分）；出場同 "exits"。
+    topup：額度隨資產成長的補足規則（2026-11-01 使用者）。dict：
+      "signal"＝選項 2：持股當天再次符合完整買進條件（data[sid]["buy"]）、未套牢、仍在成分股，而部位成本 < 當天額度 × 首買比例
+        （額度＝可投資資產 ÷ 5；可投資資產＝現金＋未套牢持股市值，套牢＝虧損超過 trap_loss）時，補到該金額；
+      "newmoney"＝選項 4：追加資金當天，新錢優先補「殖利率仍達門檻（data[sid]["yield_ok"]）、未套牢、成本低於當天額度 × 首買比例」
+        的持股（殖利率最高者優先），沒有才留現金；
+      "ratchet"＝選項 1：跌深／定期加碼的基準改為 max(進場額度, 當天可投資資產 ÷ 5)。
+      "health_min"＝健康度門檻：健康度＝可投資資產 ÷ 總資產（套牢股佔越多越低），低於門檻時以上三種動作都不做，等帳戶恢復。
+      "min_amt"＝最小補足金額（占總資產比例，預設 1%）；"trap_loss" 預設 −0.30。
     first_split=(keep, wait, expire)：進場節奏。首買只先買「首買金額 × keep」，剩下的錢保留，等該股在 wait 個交易日內再出現
       技術買點／加碼訊號時補進；到期沒出現：expire="add"＝直接補、"drop"＝不補（錢回到一般現金）。保留的錢仍可被其他新買點用掉。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
@@ -386,6 +395,35 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
 
     def pos_value(k):
         return sum(q["shares"] * data[s_]["close_ff"][k] for s_, q in positions.items())
+
+    TU = topup or {}
+    trap_loss = TU.get("trap_loss", -0.30)
+
+    def is_trapped(s_, q, k):
+        return data[s_]["close_ff"][k] / (q["cost"] / q["shares"]) - 1 < trap_loss
+
+    def investable(k):
+        return cash + sum(q["shares"] * data[s_]["close_ff"][k] for s_, q in positions.items() if not is_trapped(s_, q, k))
+
+    def topup_target(s_, k, inv):
+        fr_ = data[s_]["first_frac"][k] if "first_frac" in data[s_] else first
+        return inv / MAX_SLOTS * fr_
+
+    def do_topup(s_, n, amt, note):
+        nonlocal cash
+        o_ = data[s_]["open"][n]
+        if np.isnan(o_) or amt <= 1e-9:
+            return 0.0
+        amt = min(amt, cash)
+        if amt <= 1e-9:
+            return 0.0
+        q = positions[s_]
+        q["shares"] += amt * (1 - BUY_COST) / o_
+        q["cost"] += amt
+        q["topups"] = q.get("topups", 0) + 1
+        cash -= amt
+        log(n, s_, "加碼", o_, amt * (1 - BUY_COST) / o_, amt, note)
+        return amt
 
     def hedge_exit(n, reason):
         nonlocal cash
@@ -531,6 +569,20 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             cash += contributions[n]
             rest_base[0] += contributions[n]
             log(n, "", "追加資金", np.nan, 0.0, contributions[n])
+            if TU.get("newmoney"):
+                inv_ = investable(p); tot_ = cash + pos_value(p)
+                if tot_ > 0 and inv_ / tot_ >= TU.get("health_min", 0.0):
+                    money = contributions[n]
+                    cands_ = sorted([(data[s_]["yield"][p], s_) for s_, q in positions.items()
+                                     if not is_trapped(s_, q, p) and mem.get(s_, no)[p] and data[s_].get("yield_ok", no)[p]
+                                     and q["cost"] < topup_target(s_, p, inv_) and not np.isnan(data[s_]["open"][n])], reverse=True)
+                    for _, s_ in cands_:
+                        room = topup_target(s_, p, inv_) - positions[s_]["cost"]
+                        amt = min(room, money)
+                        if amt >= TU.get("min_amt_new", 0.0) * tot_ and amt > 1e-9:
+                            money -= do_topup(s_, n, amt, f"新錢補足（殖利率 {data[s_]['yield'][p]:.2f}% 仍達門檻，補到當天額度）")
+                        if money <= 1e-9:
+                            break
         if H["val"] > 0 and hedge_index is not None and not np.isnan(hedge_index[n]):
             H["val"] *= 1 + hedge_index[n]
         value_prev = cash + H["val"] + pos_value(p)
@@ -767,6 +819,10 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     return value_prev / MAX_SLOTS
                 if kind == "position":
                     return pos["shares"] * c_prev
+                if TU.get("ratchet"):
+                    inv_ = investable(p)
+                    if value_prev > 0 and inv_ / value_prev >= TU.get("health_min", 0.0):
+                        return max(pos["budget"], inv_ / MAX_SLOTS)
                 return pos["budget"]
             # 加碼倍數：data[sid]["add_mult"]（每日陣列，信心分級用）存在時，加碼金額乘上訊號日的倍數；0＝不加
             amult = d["add_mult"][p] if "add_mult" in d else 1.0
@@ -871,6 +927,16 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 picked += 1
                 if zone:
                     zone_free[zone] -= 1
+        if TU.get("signal") and positions:
+            inv_ = investable(p); tot_ = cash + pos_value(p)
+            if tot_ > 0 and inv_ / tot_ >= TU.get("health_min", 0.0):
+                for s_ in sorted(positions, key=lambda x: -np.nan_to_num(data[x]["yield"][p], nan=-1)):
+                    q = positions[s_]
+                    if s_ in sold_today or is_trapped(s_, q, p) or not mem.get(s_, no)[p] or not data[s_]["buy"][p]:
+                        continue
+                    room = topup_target(s_, p, inv_) - q["cost"]
+                    if room >= TU.get("min_amt", 0.01) * tot_:
+                        do_topup(s_, n, room, f"買點再現補到當天額度（可投資資產 {inv_:.3f}，健康度 {inv_ / tot_:.0%}）")
         if hedge_index is not None and hedge_mode == "cashlevel":
             if not H["armed"] and sold_today:
                 H["armed"] = True

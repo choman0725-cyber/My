@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
-results*/portfolio_prepared.pkl
+results*/portfolio_prepared*.pkl
+results*/param_opt_sigs_2006*.pkl
 data/universe/_finmind_cache/
 data/universe/_pcf_cache/
 data/universe/_verify_cache/

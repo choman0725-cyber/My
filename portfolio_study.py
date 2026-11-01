@@ -313,22 +313,22 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     cash_rate／cash_index／cash_reserve：閒置現金的去處（近似：視為可即時變現，不計交易成本）。
       cash_rate＝年利率（例如 0.04＝閒錢年化 4%，模擬放短天期債券 ETF）；cash_index＝與 dates 對齊的每日報酬陣列
       （例如 0050 的日報酬，模擬閒錢放 0050）；兩者都只套用在「現金 − cash_reserve × 前一日總資產」的部分。
-    hedge_*：閒錢避險部位（使用者 2026-10-31 的邏輯）。hedge_index＝與 dates 對齊的避險標的每日報酬陣列（0050、債券 ETF，或依大盤年線
-      切換的混合陣列）。每天收盤前，現金超過「hedge_reserve × 總資產」（預設 10%）的部分、且 ≥ hedge_min × 總資產，就投入避險部位
-      （進出各收 hedge_cost）。避險部位扣出場成本後獲利 ≥ hedge_take（5%）→ 全部領出變現金，之後 hedge_cooldown 個交易日（2 週＝10）
-      不再投入；虧損則續抱、不停損。續抱期間若買進新股票：先用現金（預備金）買，買完即啟動「出清方案」——避險部位一回到損益兩平
+    hedge_*：「閒錢應用」部位（2026-11-01 使用者定名；參數名沿用 hedge_ 前綴）。第一版（2026-10-31 的邏輯）：hedge_index＝與 dates 對齊的避險標的每日報酬陣列（0050、債券 ETF，或依大盤年線
+      切換的混合陣列）。每天收盤前，現金超過「hedge_reserve × 總資產」（預設 10%）的部分、且 ≥ hedge_min × 總資產，就投入閒錢部位
+      （進出各收 hedge_cost）。閒錢部位扣出場成本後獲利 ≥ hedge_take（5%）→ 全部領出變現金，之後 hedge_cooldown 個交易日（2 週＝10）
+      不再投入；虧損則續抱、不停損。續抱期間若買進新股票：先用現金（預備金）買，買完即啟動「出清方案」——閒錢部位一回到損益兩平
       （扣成本後 ≥ 0）立刻全部出掉，出掉的錢用來加碼那檔剛買的股票：hedge_add_timing="signal"＝等該股再出現技術買點／加碼訊號
       （最多等 hedge_add_wait 個交易日，到期直接加）、"immediate"＝出清隔天開盤就加；hedge_add_cap="shortfall"＝最多補到首買原本該買
       的金額（額度 × 首買比例）、"budget"＝最多補到整個單檔額度（總資產 ÷ 5）；剩下的錢回到現金。hedge_force=True＝買股時現金不足
-      就立刻（不等兩平）出清避險部位來買。hedge_from="start"＝起跑日的現金就算閒錢；"first_sell"＝第一次賣出股票之後才開始。
+      就立刻（不等兩平）出清閒錢部位來買。hedge_from="start"＝起跑日的現金就算閒錢；"first_sell"＝第一次賣出股票之後才開始。
       hedge_exit_cooldown=True＝兩平出清後也套用 cooldown（避免當天又把剩餘現金投回去）。
       hedge_idle_days=N＝現金要連續 N 個交易日都超過預備金才算「閒錢」投入（0＝當天就投；避免停利當天投入、隔天買股又被限縮）。
-      避險部位計入總資產（額度＝總資產 ÷ 5 也包含它）；買股、加碼只能用現金，不會動用避險部位（除非 hedge_force）。
-      eq.attrs["hedge_log"] 記錄每段避險部位的進出與損益。
-    hedge_mode="exits"（使用者 2026-11-01 第二版避險定義）：不用現金門檻，改用事件觸發——連續 hedge_trigger_exits 檔出清
+      閒錢部位計入總資產（額度＝總資產 ÷ 5 也包含它）；買股、加碼只能用現金，不會動用閒錢部位（除非 hedge_force）。
+      eq.attrs["hedge_log"]（別名 eq.attrs["閒錢紀錄"]）記錄每段閒錢部位的進出與損益。
+    hedge_mode="exits"（使用者 2026-11-01 第二版閒錢應用定義）：不用現金門檻，改用事件觸發——連續 hedge_trigger_exits 檔出清
       （中間沒有新買）後開始等 hedge_wait 個交易日；等待期內主引擎沒有買進任何標的，就把當時現金的 hedge_frac 一次投入避險標的；
-      之後主引擎一買進新標的，避險部位「扣成本後不賠錢」就出場回現金（不加碼到股票）。hedge_take=None 時沒有獲利領出規則。
-      等待期內若有買進，取消這次等待、計數歸零。持有避險部位期間再出現連續出清，會再觸發一次投入（加碼避險部位）。
+      之後主引擎一買進新標的，閒錢部位「扣成本後不賠錢」就出場回現金（不加碼到股票）。hedge_take=None 時沒有獲利領出規則。
+      等待期內若有買進，取消這次等待、計數歸零。持有閒錢部位期間再出現連續出清，會再觸發一次投入（加碼閒錢部位）。
       hedge_trigger_window=N：改成「最近 N 個交易日內出清 ≥ hedge_trigger_exits 檔」就觸發，出清計數不被買進歸零（較寬的解讀）。
     hedge_mode="cashlevel"（使用者 2026-11-01 第三版）：觸發條件改成「現金 > hedge_reserve ×（現金＋未套牢持股市值）」，套牢股不計
       （hedge_trap="stale"＝正式版不佔名額的定義：虧損 >30% 或持有 >1 年；"deep"＝只算虧損 >30%）。成立後等 hedge_wait 個交易日
@@ -377,7 +377,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
-    # 避險部位狀態
+    # 閒錢部位狀態
     H = {"val": 0.0, "cost": 0.0, "cool": -1, "liq": False, "start": None, "armed": hedge_from == "start", "deposits": 0, "idle_run": 0,
          "exits": 0, "wait_until": None, "exit_days": []}
     earmarks = []      # [{sid, cap}]：出清後要加碼的股票與金額上限
@@ -395,7 +395,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                           "報酬%": 100 * (proceeds / H["cost"] - 1), "持有日": (dates[n] - dates[H["start"]]).days, "投入次數": H["deposits"]})
         cost_, start_ = H["cost"], H["start"]
         H.update(val=0.0, cost=0.0, start=None, deposits=0)
-        log(n, "避險", "避險出場", np.nan, 0.0, proceeds, f"{reason}；投入 {cost_:.4f}，損益 {100 * (proceeds / cost_ - 1):+.1f}%")
+        log(n, "閒錢", "閒錢出場", np.nan, 0.0, proceeds, f"{reason}；投入 {cost_:.4f}，損益 {100 * (proceeds / cost_ - 1):+.1f}%")
         return proceeds
 
     raw_cache = {}
@@ -499,7 +499,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         mv = sum(q["shares"] * data[s_]["close_ff"][p_] for s_, q in positions.items())
         tot = cash + mv + H["val"]
         ledger.append({"日期": dates[n], "代號": sid, "動作": action, "價格": price, "股數": shares_delta, "金額": amount,
-                       "說明": note, "現金": cash, "避險部位": H["val"], "持股檔數": len(positions), "持股市值": mv, "總資產": tot,
+                       "說明": note, "現金": cash, "閒錢部位": H["val"], "持股檔數": len(positions), "持股市值": mv, "總資產": tot,
                        "持股": "、".join(f"{s_}({q['shares'] * data[s_]['close_ff'][p_] / tot:.0%})" for s_, q in positions.items())})
 
     def close_out(sid, n, price, reason):
@@ -579,7 +579,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos_["cost"] += invest
                     pos_["hedge_adds"] = pos_.get("hedge_adds", 0) + 1
                     cash -= invest
-                    log(n, sid_, "加碼", o_, invest * (1 - BUY_COST) / o_, invest, q_.get("note", "避險出清後加碼"))
+                    log(n, sid_, "加碼", o_, invest * (1 - BUY_COST) / o_, invest, q_.get("note", "閒錢出清後加碼"))
                 pool.remove(q_)
         sold_today = set()
         pending_offsets = []
@@ -857,12 +857,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 cash -= invest
                 log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）"
-                    + ("；啟動避險出清方案" if H["val"] > 0 else ""))
+                    + ("；啟動閒錢出清方案" if H["val"] > 0 else ""))
                 last_buy_n = n
                 H["exits"] = 0
                 if not hedge_trigger_window:
                     H["exit_days"].clear()
-                H["wait_until"] = None          # 等待期內買到股票：取消這次避險觸發
+                H["wait_until"] = None          # 等待期內買到股票：取消這次閒錢觸發
                 if H["val"] > 0:        # 續抱避險期間買了股票：啟動出清方案，兩平後的錢加碼這檔（hedge_add_cap="none" 則只回現金）
                     H["liq"] = True
                     if hedge_add_cap != "none":
@@ -894,7 +894,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         H["deposits"] += 1
                         if H["start"] is None:
                             H["start"] = n
-                        log(n, "避險", "避險投入", np.nan, 0.0, amt_, f"現金 > 未套牢資產 {hedge_reserve:.0%} 且等 {hedge_wait} 日無買進")
+                        log(n, "閒錢", "閒錢投入", np.nan, 0.0, amt_, f"現金 > 未套牢資產 {hedge_reserve:.0%} 且等 {hedge_wait} 日無買進")
         elif hedge_index is not None and hedge_mode == "exits":
             if H["wait_until"] is not None and n >= H["wait_until"] and not H["liq"]:
                 H["wait_until"] = None
@@ -907,7 +907,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     H["deposits"] += 1
                     if H["start"] is None:
                         H["start"] = n
-                    log(n, "避險", "避險投入", np.nan, 0.0, amt_, f"連續 {hedge_trigger_exits} 檔出清後等 {hedge_wait} 日無買進，投入現金 {hedge_frac:.0%}")
+                    log(n, "閒錢", "閒錢投入", np.nan, 0.0, amt_, f"連續 {hedge_trigger_exits} 檔出清後等 {hedge_wait} 日無買進，投入現金 {hedge_frac:.0%}")
         elif hedge_index is not None:
             if not H["armed"] and sold_today:
                 H["armed"] = True
@@ -922,7 +922,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 H["deposits"] += 1
                 if H["start"] is None:
                     H["start"] = n
-                log(n, "避險", "避險投入", np.nan, 0.0, excess, f"現金超過總資產 {hedge_reserve:.0%} 的部分")
+                log(n, "閒錢", "閒錢投入", np.nan, 0.0, excess, f"現金超過總資產 {hedge_reserve:.0%} 的部分")
         value = cash + H["val"]
         for sid, pos in positions.items():
             d = data[sid]
@@ -950,6 +950,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     eq.attrs["cash"] = cash
     eq.attrs["hedge"] = dict(H)
     eq.attrs["hedge_log"] = hedge_log
+    eq.attrs["閒錢紀錄"] = hedge_log
     return pd.DataFrame(trades, columns=cols), eq
 
 

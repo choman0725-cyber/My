@@ -49,11 +49,25 @@ COOLDOWNS = (0, 3, 5, 7, 10, 15, 20, 30)
 
 # ---------- 資料 ----------
 
-def load_prices(stock_id):
+DB = ROOT / "data" / "market.db"     # build_db.py 由 CSV 建成的 SQLite（不進 git）；存在時日線從這裡讀，否則讀 CSV，內容相同
+
+
+def _read_prices(stock_id):
+    if DB.exists():
+        import sqlite3
+        with sqlite3.connect(DB) as con:
+            df = pd.read_sql_query("SELECT date, open, high, low, close, adj_close, volume FROM prices WHERE stock_id=? ORDER BY date",
+                                   con, params=(stock_id,), parse_dates=["date"])
+        return df if len(df) else None
     path = UNI / "prices" / f"{stock_id}.csv"
-    if not path.exists():
+    return pd.read_csv(path, parse_dates=["date"]) if path.exists() else None
+
+
+def load_prices(stock_id):
+    df = _read_prices(stock_id)
+    if df is None:
         return None
-    df = pd.read_csv(path, parse_dates=["date"]).set_index("date").sort_index()
+    df = df.set_index("date").sort_index()
     df = df[df["volume"] > 0].dropna(subset=["open", "high", "low", "close"])
     raw_close = df["close"].copy()
     if not RAW_PRICES and "adj_close" in df:
@@ -256,7 +270,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         win_add=None, win_add_max=1, cash_rate=0.0, cash_index=None, cash_reserve=0.0,
         hedge_index=None, hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_min=0.01, hedge_cost=0.001,
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
-        hedge_exit_cooldown=True, hedge_idle_days=0):
+        hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -310,6 +324,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       hedge_idle_days=N＝現金要連續 N 個交易日都超過預備金才算「閒錢」投入（0＝當天就投；避免停利當天投入、隔天買股又被限縮）。
       避險部位計入總資產（額度＝總資產 ÷ 5 也包含它）；買股、加碼只能用現金，不會動用避險部位（除非 hedge_force）。
       eq.attrs["hedge_log"] 記錄每段避險部位的進出與損益。
+    first_split=(keep, wait, expire)：進場節奏。首買只先買「首買金額 × keep」，剩下的錢保留，等該股在 wait 個交易日內再出現
+      技術買點／加碼訊號時補進；到期沒出現：expire="add"＝直接補、"drop"＝不補（錢回到一般現金）。保留的錢仍可被其他新買點用掉。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
       且出現加碼訊號（爆量下影線／長紅）時，加碼「部位市值 × win_add」，每個部位最多 win_add_max 次。
     settle：定期結算。(months, mode)，例如 (6, "profit")＝每半年第一個交易日，把「扣成本後有賺」的部位全部賣出；
@@ -531,7 +547,13 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             d_, o_ = data[sid_], data[sid_]["open"][n]
             if np.isnan(o_):
                 continue
-            if hedge_add_timing == "immediate" or d_["add"][p] or d_["buy"][p] or n - q_["since"] >= hedge_add_wait:
+            wait_ = q_.get("wait", hedge_add_wait)
+            expired = n - q_["since"] >= wait_
+            signal = hedge_add_timing == "immediate" or d_["add"][p] or d_["buy"][p]
+            if expired and q_.get("expire", "add") == "drop" and not signal:
+                pool.remove(q_)
+                continue
+            if signal or expired:
                 invest = min(q_["amt"], cash)
                 if invest > 1e-9:
                     pos_ = positions[sid_]
@@ -539,7 +561,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                     pos_["cost"] += invest
                     pos_["hedge_adds"] = pos_.get("hedge_adds", 0) + 1
                     cash -= invest
-                    log(n, sid_, "加碼", o_, invest * (1 - BUY_COST) / o_, invest, "避險出清後加碼")
+                    log(n, sid_, "加碼", o_, invest * (1 - BUY_COST) / o_, invest, q_.get("note", "避險出清後加碼"))
                 pool.remove(q_)
         sold_today = set()
         pending_offsets = []
@@ -807,6 +829,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 invest = size(sid, n, invest)
                 if invest <= 0:
                     continue
+                if first_split:
+                    keep_, wait_, expire_ = first_split
+                    rest_ = invest * (1 - keep_)
+                    invest -= rest_
+                    pool.append({"sid": sid, "amt": rest_, "since": n, "wait": wait_, "expire": expire_, "note": "首買分批·第二批"})
                 o = data[sid]["open"][n]
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}

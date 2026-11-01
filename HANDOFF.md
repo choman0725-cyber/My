@@ -1,10 +1,27 @@
 # HANDOFF：台股殖利率＋技術買點做多策略（0050／0056 電子股）
 
-最後更新：2026-10-31。接手的人（或下一個 AI 工作階段）看這份就夠了；規則細節在 `FINAL_RULES.md`。
+最後更新：2026-11-01。接手的人（或下一個 AI 工作階段）看這份就夠了；規則細節在 `FINAL_RULES.md`。
 
 ---
 
-## 0. 2026-10-31 資料修正（最重要，先讀這段再讀其他）
+## 0. 現況一覽（2026-11-01 交接，先看這段）
+
+**正式版＝E＋D＋U1，股票池＝0050／0056 電子股（分類法 90 檔）。** 所有細節在 `FINAL_RULES.md` 開頭的「現況一覽」。
+
+| | |
+|---|---|
+| 正式設定 | `daily_run.py` 的 `FINAL`（含 `topup`＝U1）；股票池 `portfolio_electronics.ELECTRONICS`（由 `data/universe/industry_finmind.csv` 產生） |
+| 數字 | 20 情境三段 26.0、最差 10% 21.7、σ 2.25；500 萬 2017-01-03 起 4,854 萬、2016-12-28 起 3,828 萬；每月 10 萬 9,910 萬 |
+| 每日 | `python daily_run.py` → 2026-10-30、4,854 萬、持股 7 檔、沒有動作 |
+| 檢查 | `python check_all.py --full` → 2026-11-01 全部通過（編譯、資料、兩條路徑、每日程式、20 情境重現） |
+| 資料 | FinMind（第二輪修正，`VERIFY_REPORT.md`）；CSV 為原始，`data/market.db` 由 `build_db.py` 產生；債券 ETF、0051／0052 成分股、產業分類都已在 `data/universe/` |
+| 快取（不進 git） | `results/portfolio_prepared.pkl`（2017 起，必要）、`portfolio_prepared_2006.pkl`、`portfolio_prepared_2006_all.pkl`（研究用）；重建方式見第 3 節 |
+| 待決／未做 | FinMind token 不在雲端環境變數（只影響更新資料）；每日程式「從實際持股起算」模式未做；2007 起年份是否納入正式驗證（使用者說先不用） |
+| 2026-11-01 的決定 | 採用 U1；首買不改；美債不考慮；閒錢應用不納入；0051／0052 不納入；名單改分類法；標準差不改（不加補足煞車） |
+
+今天的研究全文：`REPORT_hedge_2006.md`（第 1～16 節，每節有表與結論）。
+
+### 0.1 資料修正史（2026-10-31）
 
 - 另一個 session（分支 `claude/youthful-carson-jhzz24`，`DATA_AUDIT.md`）發現舊資料的 yfinance `close` 是分割／配股調整過的價格，殖利率在配股／分割前被高估；加上 EPS／股利與分割後股價的股數基準不一致。本 session 獨立驗證屬實，另外查到 yfinance 缺 9 個交易日。三項都已修正並合併進本分支（細節與證據：`FINAL_RULES.md` 第 0 節）。
 - **修正後正式版（規則未改）：三段平均 17.9（舊 31.9）、最差 10% 15.0、標準差 1.1；500 萬 2017-01-03 起 2,512 萬（舊 4,247 萬）、2016-12-28 起 2,595 萬。0050 買進持有同期 3,986 萬。** 2017～2023 正式版年化 18.5% 贏 0050 的 13.3%，2024～2026 0050 年化 52.8% 遠勝；輸在台積電帶動的三年，是殖利率策略的結構特性。
@@ -52,7 +69,10 @@ python ledger_report.py [--capital --start --contrib]
 2. 刪掉 `results/portfolio_prepared.pkl`，再 `python portfolio_electronics.py` 重建（含 149 檔的殖利率序列；約 3 分鐘建快取＋7 分鐘跑它附帶的回測）。**這個 pkl 被 .gitignore 排除、不在 git 裡**，新環境第一次跑時也要這樣重建；只想建快取不跑回測可用：
    `python -c "import pickle,pandas as pd,portfolio_study as ps;from backtest import RESULTS,ROOT;cons=pd.read_csv(ps.UNI/'constituents.csv',dtype={'stock_id':str,'etf':str});cal=pd.read_csv(ROOT/'data'/'TAIEX.csv',parse_dates=['date'])['date'];dates=pd.DatetimeIndex(cal[cal>=ps.START-pd.Timedelta(days=5)]).sort_values();(RESULTS/'portfolio_prepared.pkl').write_bytes(pickle.dumps(ps.prepare(sorted(cons['stock_id'].unique()),dates)))"`
 3. 刪掉 `results/param_opt_sigs.pkl`（技術訊號快取，這個有進 git）讓它重算。
-4. 再跑 `daily_run.py`。
+4. `python build_db.py` 重建 `data/market.db`（引擎優先讀 db；沒有也能跑，讀 CSV）。
+5. 產業分類（股票池用）：`python -c "import json,urllib.request,pandas as pd;d=json.load(urllib.request.urlopen('https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInfo'))['data'];df=pd.DataFrame(d);df=df[df.stock_id.str.fullmatch(r'\d{4}')].sort_values('date').drop_duplicates('stock_id',keep='last');df[['stock_id','stock_name','industry_category','type','date']].to_csv('data/universe/industry_finmind.csv',index=False,encoding='utf-8-sig')"`（不需 token）。改了之後 `python -c "import portfolio_electronics as pe;print(len(pe.ELECTRONICS))"` 應仍是 91，否則名單變了要重跑驗證。
+6. 再跑 `daily_run.py`，然後 `python check_all.py --full` 確認數字（預期值寫在 `check_all.py` 的 `EXPECT`；資料更新後數字會變，更新 EXPECT 前先確認變動合理）。
+7. 研究用快取：`results/portfolio_prepared_2006.pkl`（`python long_history.py` 自動建，約 25 分鐘）、`portfolio_prepared_2006_all.pkl`（含 0051／0052，約 50 分鐘，指令見 11.5）。
 
 資料來源與細節：`data/universe/README.md`、`constituents_notes.md`。資料是由使用者本機的 FinMind 抓的（雲端環境連不到金融網站），用 `fetch_data.py`／另一個工作階段產生。
 
@@ -231,7 +251,7 @@ python ledger_report.py [--capital --start --contrib]
 - 本 session 因早期取得「觸及使用者其他 session」授權，之後只接受信任裝置的請求，其他雲端 session 讀不到它；這是交接到新 session 的原因。**新 session 請不要申請該授權**，否則會有同樣限制。
 - 資料是使用者本機 session「專案交接與設定」（session_01VJgQ5eCEF74TEYsNijD87o）用 FinMind 抓的，雲端連不到金融網站；要更新資料請使用者在本機跑，或請該 session 幫忙，成品以 Artifact 交付再用 Artifact 工具讀取。
 
-### 11.5 目前狀態（2026-10-31 接手 session 更新，資料修正後）
+### 11.5 目前狀態（2026-11-01 更新；最新摘要見第 0 節）
 - 工作目錄乾淨，所有結果已 commit／push。
 - 使用者最近的決定：①股票池不擴大；②採用「連續 5 年賺錢」買進濾網；③資料修正後先維持 A，之後 ④**採用 E＋D 為新正式版**（成長股相對規則＋信心 ≥3 首買 80%），E／A／C 為備選。 ⑤（2026-11-01）**首買不改**：維持額度 50%、信心 ≥3 時 80%，一次買足；首買分批、年線下減碼等進場節奏不採用。閒錢避險部位不納入正式版。⑥（2026-11-01）**採用 U1 賺錢部位買點再現補足**為正式規則；虧損部位加碼走舊規則（進場額度）；美債不再考慮。⑦（2026-11-01）**股票池名單改成分類法**（90 檔；0051、0052 不納入）。⑧（2026-11-01）**U1 維持原樣、標準差 2.25 不改**（不加補足煞車）。
 - 環境驗證指令與預期值（接手時先跑；`results/portfolio_prepared.pkl` 不在 git 裡，沒有的話先照第 3 節重建）：

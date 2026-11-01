@@ -168,7 +168,7 @@ def apply(cfg):
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
     k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), str(cfg.get("growth_rel")),
-         str(cfg.get("conf_first")), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
+         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
@@ -203,7 +203,11 @@ def apply(cfg):
             hi, frac = cfg["conf_first"]
             if "f4" not in _conf:
                 _conf["f4"] = rules_ext.market_factor(G["dates"])
-            for sid, (score, fdf) in rules_ext.confidence(G["sub"], G["dates"], _conf["f4"]).items():
+            vw = cfg.get("conf_vw")
+            if vw not in (None, "market") and "svw" not in _conf:
+                _conf["mparts"] = rules_ext.market_factor(G["dates"], parts=True)
+                _conf["svw"] = rules_ext.stock_volwick(G["sub"], G["dates"])
+            for sid, (score, fdf) in rules_ext.confidence(G["sub"], G["dates"], _conf["f4"], vw, _conf.get("mparts"), _conf.get("svw")).items():
                 d = G["sub"][sid]
                 d["conf_score"] = score
                 d["first_frac"] = np.where(score >= hi, frac, cfg["first"])

@@ -43,8 +43,8 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
     return out
 
 
-def market_factor(dates):
-    """F4 大盤：200 日線上 +1、前 5 日放量 +1、放量日長下影線 +1（0～3）。"""
+def market_factor(dates, parts=False):
+    """F4 大盤：200 日線上 +1、前 5 日放量 +1、放量日長下影線 +1（0～3）。parts=True 回傳三個 0/1 陣列（年線、放量、下影線）。"""
     from indicators import pv_triggers, wick_conditions
     tx = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"]).set_index("date")
     tx = tx[tx["volume"] > 0]
@@ -53,12 +53,34 @@ def market_factor(dates):
     wick = pv_triggers(tx)["wick_buy"]
     vol5 = vol_up.astype(int).rolling(5, min_periods=1).max().astype(bool)
     wick5 = wick.astype(int).rolling(5, min_periods=1).max().astype(bool)
+    if parts:
+        return tuple(x.astype(int).reindex(dates).fillna(0).astype(int).values for x in (above, vol5, wick5))
     return (above.astype(int) + vol5.astype(int) + wick5.astype(int)).reindex(dates).fillna(0).astype(int).values
 
 
-def confidence(sub, dates, f4=None):
-    """回傳 {sid: (信心分數陣列, 因子 DataFrame)}。"""
-    if f4 is None:
+def stock_volwick(sub, dates):
+    """個股版放量／引線（定義同大盤）：前 5 日內有放量（量 > 20 日均量 1.5 倍）、有放量長下影線。回傳 {sid: (vol5, wick5)} 0/1 陣列。"""
+    from indicators import pv_triggers, wick_conditions
+    import portfolio_study as ps
+    out = {}
+    for sid in sub:
+        df, _ = ps.load_prices(sid)
+        v5 = wick_conditions(df)["vol_up"].astype(int).rolling(5, min_periods=1).max()
+        w5 = pv_triggers(df)["wick_buy"].astype(int).rolling(5, min_periods=1).max()
+        out[sid] = tuple(x.reindex(dates).fillna(0).astype(int).values for x in (v5, w5))
+    return out
+
+
+def confidence(sub, dates, f4=None, vw=None, mparts=None, svw=None):
+    """回傳 {sid: (信心分數陣列, 因子 DataFrame)}。
+    vw：F4 的放量／引線看誰（2026-11-01 研究，conf_volwick_study.py）。None／"market"＝大盤（正式版）；
+      "stock"＝個股取代大盤；"stock_main"＝個股各 1 分、大盤各 0.5 分；"both"＝個股、大盤各 1 分。年線一律看大盤。
+      mparts＝market_factor(parts=True)、svw＝stock_volwick() 的結果（可傳入快取）。"""
+    if vw not in (None, "market"):
+        mparts = mparts if mparts is not None else market_factor(dates, parts=True)
+        svw = svw if svw is not None else stock_volwick(sub, dates)
+        above, mv, mw = mparts
+    elif f4 is None:
         f4 = market_factor(dates)
     out = {}
     for sid, d in sub.items():
@@ -73,6 +95,10 @@ def confidence(sub, dates, f4=None):
         hi60 = c.rolling(60, min_periods=20).max()
         dd = (c / hi60 - 1).values
         f6 = ((dd <= -0.15) & (dd >= -0.40)).astype(int)
+        if vw not in (None, "market"):
+            sv, sw = svw[sid]
+            wm = {"stock": 0.0, "stock_main": 0.5, "both": 1.0}[vw]
+            f4 = above + sv + sw + wm * (mv + mw)
         score = f1 + f4 + f5 + f6
         out[sid] = (score, pd.DataFrame({"F1相對殖利率": f1, "F4大盤": f4, "F5急漲跌": f5, "F6回檔60": f6}, index=dates))
     return out

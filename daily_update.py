@@ -154,6 +154,8 @@ def rebuild():
 def advice():
     acc = json.loads(ACCOUNT.read_text(encoding="utf-8"))
     cmd = [sys.executable, "daily_run.py", "--holdings", str(HOLDINGS), "--cash", str(acc["cash"])]
+    if acc.get("slots3"):                           # my_account.json 寫 "slots3": true → 3 檔版
+        cmd.append("--slots3")
     if acc.get("monthly"):
         cmd += ["--monthly", str(acc["monthly"])] + (["--monthly-from", acc["monthly_from"]] if acc.get("monthly_from") else [])
     out = run(cmd)

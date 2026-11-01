@@ -33,6 +33,9 @@ FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, No
 # 但每日程式會直接印出金額，使用者 2026-10-31 決定維持額度基準
 # growth_rel=(k, gmed, window)：過去 750 日殖利率中位數 < 4% 的股票（成長股）改用「殖利率 ≥ 自己中位×1.25」買、「≥ 自己中位」續抱
 # conf_first=(hi, frac)：信心 ≥ 3 的買點首買額度 80%，其餘 50%（信心定義見 rules_ext.py）
+# 3 檔版（--slots3，2026-11-01 給只能買 3 檔的人用，使用者自己的帳戶維持 5 檔）：同時最多 3 檔（套牢、被剔除也佔名額）、
+# 每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 仍 80%），其他照正式版（slot3_study.py：首買 60～70% 最好，其餘參數改了都變差）
+FINAL_3 = {"max_slots": 3, "hard_cap": True, "first": 0.65}
 # mkt=(範圍, k, 續抱k, 下限)：買進門檻＝max(當天全部 0050＋0056 成分股預估殖利率中位數 ＋ k×σ, 下限)；續抱 k=None 表示續抱維持固定 hold_yield
 # profit_years=5：買進時最近 5 個已知完整會計年度（Q4 於隔年 3/31 後視為已知）年度 EPS 全部 > 0；上市不滿 5 年以已知年度計
 RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣都隔天開盤）
@@ -128,7 +131,12 @@ def main():
     ap.add_argument("--cash", type=float, default=None, help="搭配 --holdings：目前可用現金（元）")
     ap.add_argument("--monthly", type=float, default=0, help="每月追加金額（每月第一個交易日開盤前），例如 100000")
     ap.add_argument("--monthly-from", default=None, help="每月追加從這個月開始，例如 2026-12（預設起跑當月的下個月份起）")
+    ap.add_argument("--slots3", action="store_true", help="3 檔版：同時最多 3 檔、每檔額度＝總資產 ÷ 3、首買 65%%（見 FINAL_3）")
     a = ap.parse_args()
+    global FINAL
+    if a.slots3:
+        FINAL = {**FINAL, **FINAL_3}
+        print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")
 
     po.setup(); G = rs.G
     if a.asof:
@@ -183,7 +191,8 @@ def main():
 
     names = pd.read_csv(ROOT / "data" / "universe" / "constituents.csv", dtype=str).drop_duplicates("stock_id").set_index("stock_id")["name"]
     last = dates[-1]; p = len(dates) - 1
-    print(RULE_TEXT)
+    print(RULE_TEXT if not a.slots3 else RULE_TEXT.replace("最多 5 檔", "最多 3 檔").replace("÷ 5", "÷ 3")
+          .replace("首買額度 50%", "首買額度 65%").replace("不佔 5 檔名額；被移出成分股的部位也不佔", "也佔名額（同時最多 3 檔，含套牢、被移出成分股的部位）"))
     print(f"\n資料最後日期：{last.date()}　" + (f"實際持股（{a.holdings}）＋現金 {a.cash / 1e4:,.0f} 萬" if a.holdings else
           f"起始 {dates[s_n].date()}　投入 {a.capital / 1e4:,.0f} 萬")
           + (f"＋追加 {sum(sched.values()) / 1e4:,.0f} 萬" if sched else "")

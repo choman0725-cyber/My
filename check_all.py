@@ -14,8 +14,9 @@ import pandas as pd
 from backtest import RESULTS, ROOT
 
 UNI = ROOT / "data" / "universe"
-EXPECT = {"資料最後日": "2026-10-30", "2016-12-28 起期末萬": 3828, "2017-01-03 起期末萬": 4854, "持股檔數": 7,
-          "三段平均": 25.97, "最差10最小": 21.69, "標準差平均": 2.25, "前7年": 24.24, "延續": 29.66, "單獨": 24.02}
+# 2026-11-01 股票池改成半導體＋電腦及週邊 47 檔（使用者採用，pool_tech_study.py）；電子 90 檔時為 3828／4854／7 檔／25.97／21.69／2.25／24.24／29.66／24.02
+EXPECT = {"資料最後日": "2026-10-30", "2016-12-28 起期末萬": 5022, "2017-01-03 起期末萬": 5093, "持股檔數": 5,
+          "三段平均": 33.31, "最差10最小": 23.36, "標準差平均": 1.70, "前7年": 26.82, "延續": 35.42, "單獨": 37.71}
 fails = []
 
 
@@ -94,7 +95,7 @@ def main(full=False):
     import param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps
     po.setup(); G = rs.G; d = G["dates"]; po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
     ok("資料最後日（引擎日曆）", str(d[-1].date()) == EXPECT["資料最後日"], str(d[-1].date()))
-    ok("引擎股票池", len(G["sub"]) == 90, f"{len(G['sub'])} 檔")
+    ok("引擎股票池", len(G["sub"]) == 47, f"{len(G['sub'])} 檔（2026-11-01 起半導體＋電腦及週邊；之前電子 90 檔）")
     for key, s in (("2016-12-28 起期末萬", 1), ("2017-01-03 起期末萬", d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0])):
         v = round(ps.run(G["sub"], G["member"], d, capital=5e6, start_n=s, **kw)[1].iloc[-1] * 500)
         ok(key, abs(v - EXPECT[key]) <= 1, f"{v}（預期 {EXPECT[key]}）")

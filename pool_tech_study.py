@@ -40,6 +40,9 @@ if "add" in sys.argv:
     POOLS, OUT = POOLS_ADD, "pool_tech_add"
 
 
+rs.POOL = rs.ELECTRONICS      # 這個研究從電子 90 檔往下縮，基準不是正式版池子
+
+
 def restrict(G, full, pool):
     keep = set(full["sub"]) if pool is None else set(full["sub"]) & pool
     G["sub"] = {s: d for s, d in full["sub"].items() if s in keep}
@@ -52,6 +55,7 @@ def restrict(G, full, pool):
 
 def hist():
     import long_history as lh
+    lh.POOL = lh.ELECTRONICS
     G = lh.setup(); d = G["dates"]
     full = {k: G[k] for k in ("sub", "member", "sig", "zone")}
     e16 = d.get_indexer([pd.Timestamp("2016-12-30")], method="ffill")[0]

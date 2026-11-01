@@ -18,7 +18,9 @@ import rules_ext
 from backtest import RESULTS, ROOT
 from yield_entry_study import entries
 from portfolio_contrib import irr
-from portfolio_electronics import CAPITAL, ELECTRONICS
+from portfolio_electronics import CAPITAL, ELECTRONICS, POOL as _POOL
+
+POOL = _POOL   # 正式版股票池（47 檔）；要重現 2026-11-01 以前的研究（電子 90 檔）先設 POOL = ELECTRONICS 再 setup()
 
 START = pd.Timestamp("2006-01-01")
 PKL = RESULTS / "portfolio_prepared_2006.pkl"
@@ -34,8 +36,8 @@ def setup():
         PKL.write_bytes(pickle.dumps(ps.prepare(sorted(cons["stock_id"].unique()), dates)))
     data, _ = pickle.loads(PKL.read_bytes())
     ps.attach_fundamentals(data, dates)
-    zone = {e: {k: v.values for k, v in ps.membership(cons[(cons["etf"] == e) & cons["stock_id"].isin(ELECTRONICS)], dates).items()} for e in ("0050", "0056")}
-    member = ps.membership(cons[cons["stock_id"].isin(ELECTRONICS)], dates)
+    zone = {e: {k: v.values for k, v in ps.membership(cons[(cons["etf"] == e) & cons["stock_id"].isin(POOL)], dates).items()} for e in ("0050", "0056")}
+    member = ps.membership(cons[cons["stock_id"].isin(POOL)], dates)
     G = rs.G
     G.clear()
     G.update(dates=dates, zone=zone, member=member, sub={k: v for k, v in data.items() if k in member},

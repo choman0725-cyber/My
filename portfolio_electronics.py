@@ -40,6 +40,17 @@ def electronics_from_classification():
 
 
 ELECTRONICS = electronics_from_classification()
+TECH_CATS = {"半導體業", "電腦及週邊設備業"}
+
+
+def tech_pool():
+    """2026-11-01 起正式版的股票池（使用者採用，pool_tech_study.py）：ELECTRONICS 中證交所產業別為半導體或電腦及週邊設備的 47 檔
+    （data/universe/industry_twse_elec.csv）。光電、零組件、通信、其他電子、通路、資訊服務不買。"""
+    ind = pd.read_csv(ps.UNI / "industry_twse_elec.csv", dtype=str).set_index("stock_id")["industry"]
+    return frozenset(s for s in ELECTRONICS if ind.get(s) in TECH_CATS)
+
+
+POOL = tech_pool()
 RECOMMENDED = {
     "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
 }

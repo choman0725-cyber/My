@@ -344,6 +344,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         一旦套牢（虧超過 trap_loss）就不再更新，凍結在套牢前最後一次的值；健康度低於門檻時也不更新。
       "profit_only"＝True（2026-11-01 使用者）：新規則只適用有獲利的部位——買點再現補足、新錢補足只補「前一日收盤 ≥ 平均成本」的持股；
         虧損中的部位一律走舊規則（跌深／定期加碼用進場額度，不補足）。
+      "frac"＝每次只補缺口的這個比例（預設 1.0＝補滿）；"max_per_pos"＝每個部位最多補幾次（預設不限）；
+      "cash_floor_mult"＝現金底線的倍數（預設 1＝一筆首買金額）；"max_amt"＝單次補足上限（占總資產比例，預設不限）。
       "cash_min_first"＝True 時，買點再現補足只在「補完後現金仍 ≥ 一筆首買金額（當天額度 × 首買比例）」時才做，避免吃掉新買點的錢。
       "health_min"＝健康度門檻：健康度＝可投資資產 ÷ 總資產（套牢股佔越多越低），低於門檻時以上動作都不做，等帳戶恢復。
       "min_amt"＝最小補足金額（占總資產比例，預設 1%）；"trap_loss" 預設 −0.30。
@@ -948,8 +950,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                         continue
                     if TU.get("profit_only") and data[s_]["close_ff"][p] < q["cost"] / q["shares"]:
                         continue
-                    room = topup_target(s_, p, inv_) - q["cost"]
-                    if TU.get("cash_min_first") and cash - room < inv_ / MAX_SLOTS * first:
+                    if TU.get("max_per_pos") and q.get("topups", 0) >= TU["max_per_pos"]:
+                        continue
+                    room = (topup_target(s_, p, inv_) - q["cost"]) * TU.get("frac", 1.0)
+                    if TU.get("max_amt"):
+                        room = min(room, TU["max_amt"] * tot_)
+                    if TU.get("cash_min_first") and cash - room < inv_ / MAX_SLOTS * first * TU.get("cash_floor_mult", 1):
                         continue
                     if room >= TU.get("min_amt", 0.01) * tot_:
                         do_topup(s_, n, room, f"買點再現補到當天額度（可投資資產 {inv_:.3f}，健康度 {inv_ / tot_:.0%}）")

@@ -172,7 +172,7 @@ def apply(cfg):
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
     k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), str(cfg.get("growth_rel")),
-         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
+         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg.get("gen_add"), cfg.get("growth_add"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
@@ -207,6 +207,15 @@ def apply(cfg):
                     rel_ok = np.nan_to_num(r_, nan=np.inf) >= cfg["gen_rel"]
                     d["buy"] = np.where(growth, d["buy"], d["buy"] & rel_ok)
                     d["yield_ok"] = np.where(growth, d["yield_ok"], d["yield_ok"] & rel_ok)
+                y_ = np.nan_to_num(d["yield"], nan=-1)
+                if cfg.get("gen_add"):      # 一般股另加：殖利率 ≥ 自己 3 年中位 ＋ gen_add 個百分點（中位算不出來視為通過）
+                    add_ok = y_ >= np.nan_to_num(med, nan=-np.inf) + cfg["gen_add"]
+                    d["buy"] = np.where(growth, d["buy"], d["buy"] & add_ok)
+                    d["yield_ok"] = np.where(growth, d["yield_ok"], d["yield_ok"] & add_ok)
+                if cfg.get("growth_add"):   # 成長股門檻改為 自己中位 × k ＋ growth_add 個百分點
+                    add_ok = y_ >= np.nan_to_num(med, nan=np.inf) * gk + cfg["growth_add"]
+                    d["buy"] = np.where(growth, d["buy"] & add_ok, d["buy"])
+                    d["yield_ok"] = np.where(growth, d["yield_ok"] & add_ok, d["yield_ok"])
         if cfg.get("conf_first"):
             import rules_ext
             hi, frac = cfg["conf_first"]

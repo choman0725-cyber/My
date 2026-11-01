@@ -4,7 +4,8 @@
 其他一律照正式版。版本（配對都相對「正式版（現行快取）」；另附 5 年 vs 真 3 年的配對）：
   正式版（現行快取）／正式版（真 3 年中位）／成長股改真 5 年中位／一般股 ≥真 5 年中位×1.00、×1.25
 用法：python median_hist_study.py（2006 快取沒有時先建，約 20 分鐘）　輸出：results/median_hist_eval.csv、median_hist_money.csv
-     python median_hist_study.py gen：一般股 3 年 vs 5 年中位 × k（1.00～1.25）　輸出：results/median_gen_eval.csv、median_gen_money.csv"""
+     python median_hist_study.py gen：一般股 3 年 vs 5 年中位 × k（1.00～1.25）　輸出：results/median_gen_eval.csv、median_gen_money.csv
+     python median_hist_study.py add：一般股／成長股門檻直接加 0.25、0.50 個百分點　輸出：results/median_add_eval.csv、median_add_money.csv"""
 import pickle
 import sys
 
@@ -30,6 +31,11 @@ VARIANTS = {"正式版（現行快取）": (False, {}), "正式版（真 3 年�
 VARIANTS_GEN = {"正式版（真 3 年中位）": (True, {}),
                 **{f"一般股 ≥真{y}年中位×{k:.2f}": (True, {"gen_rel": k, "gen_rel_win": w})
                    for y, w in ((3, 750), (5, 1250)) for k in (1.0, 1.05, 1.10, 1.15, 1.25)}}
+# python median_hist_study.py add：直接加百分點（使用者 2026-11-01）——一般股 ≥ 自己中位＋x、成長股 ≥ 自己中位×1.25＋x（真 3 年中位）
+VARIANTS_ADD = {"正式版（真 3 年中位）": (True, {}),
+                "一般股 ≥中位＋0.25": (True, {"gen_add": 0.25}), "一般股 ≥中位＋0.50": (True, {"gen_add": 0.50}),
+                "成長股 ≥中位×1.25＋0.25": (True, {"growth_add": 0.25}), "成長股 ≥中位×1.25＋0.50": (True, {"growth_add": 0.50}),
+                "兩者都＋0.25": (True, {"gen_add": 0.25, "growth_add": 0.25})}
 _orig = rules_ext.own_median
 
 
@@ -52,8 +58,8 @@ def hist_median(G):
 
 
 def main():
-    gen = "gen" in sys.argv
-    variants, tag, outp = (VARIANTS_GEN, "medgen", "median_gen") if gen else (VARIANTS, "medhist", "median_hist")
+    gen = "gen" in sys.argv or "add" in sys.argv
+    variants, tag, outp = ((VARIANTS_ADD, "medadd", "median_add") if "add" in sys.argv else (VARIANTS_GEN, "medgen", "median_gen")) if gen         else (VARIANTS, "medhist", "median_hist")
     po.setup(); G = rs.G; dates = G["dates"]
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     patched = hist_median(G)

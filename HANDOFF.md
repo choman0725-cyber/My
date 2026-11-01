@@ -219,7 +219,7 @@ python ledger_report.py [--capital --start --contrib]
 
 ### 11.5 目前狀態（2026-10-31 接手 session 更新，資料修正後）
 - 工作目錄乾淨，所有結果已 commit／push。
-- 使用者最近的決定：①股票池不擴大；②採用「連續 5 年賺錢」買進濾網；③資料修正後先維持 A，之後 ④**採用 E＋D 為新正式版**（成長股相對規則＋信心 ≥3 首買 80%），E／A／C 為備選。
+- 使用者最近的決定：①股票池不擴大；②採用「連續 5 年賺錢」買進濾網；③資料修正後先維持 A，之後 ④**採用 E＋D 為新正式版**（成長股相對規則＋信心 ≥3 首買 80%），E／A／C 為備選。 ⑤（2026-11-01）**首買不改**：維持額度 50%、信心 ≥3 時 80%，一次買足；首買分批、年線下減碼等進場節奏不採用。閒錢避險部位不納入正式版。
 - 環境驗證指令與預期值（接手時先跑；`results/portfolio_prepared.pkl` 不在 git 裡，沒有的話先照第 3 節重建）：
   `python daily_run.py` → 資料最後日期 2026-10-30、總資產 4,085 萬（現金 0）、持股 7 檔（群光、技嘉、神基、瑞儀、文曄、華碩、宏碁）、沒有動作、觀察名單大聯大／廣達／聯強／可成／微星／英業達／緯創；
   `python -c "import pandas as pd, param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps; po.setup(); G=rs.G; d=G['dates']; po.apply(dr.FINAL); kw=po.to_kw(dr.FINAL); [print(d[s].date(), round(ps.run(G['sub'],G['member'],d,capital=5e6,start_n=s,**kw)[1].iloc[-1]*500)) for s in (1, d.get_indexer([pd.Timestamp('2017-01-03')],method='bfill')[0])]"` → 2016-12-28 3617、2017-01-03 4085（前正式版 A：把 `FINAL` 的 `growth_rel`、`conf_first` 設 None → 2595、2514）。合併前（2026-10-31 傍晚）是 3699／4623／2595／2512。

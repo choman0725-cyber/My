@@ -8,7 +8,8 @@
      python pool_tech_study.py hist：2006 起快取，每年 1 月起跑、算到 2016 年底（AI 行情之前，檢查是否只是事後挑中近年強勢產業）
        與算到最新　輸出：results/pool_tech_hist.csv
      python pool_tech_study.py add [hist]：以「半導體＋電腦及週邊」47 檔為基準，分別加回零組件／通信／其他電子、三類全加
-       （配對相對 47 檔）　輸出：results/pool_tech_add_*.csv"""
+       （配對相對 47 檔）　輸出：results/pool_tech_add_*.csv
+     python pool_tech_study.py single [hist]：47 檔個別加入台達電／國巨／欣興／啟碁／鴻海（使用者 2026-11-01）　輸出：results/pool_tech_single_*.csv"""
 import sys
 import numpy as np
 import pandas as pd
@@ -35,9 +36,14 @@ POOLS_ADD = {"半導體＋電腦（47 檔）": set(IND.index[IND.isin(SC)]),
              "＋通信網路": set(IND.index[IND.isin(SC | {"通信網路業"})]),
              "＋其他電子": set(IND.index[IND.isin(SC | {"其他電子業"})]),
              "＋三類全加": set(IND.index[IND.isin(SC | {"電子零組件業", "通信網路業", "其他電子業"})])}
+SINGLE = {"2308": "台達電", "2327": "國巨", "3037": "欣興", "6285": "啟碁", "2317": "鴻海"}
+POOLS_SINGLE = {"半導體＋電腦（47 檔）": POOLS_ADD["半導體＋電腦（47 檔）"],
+                **{f"＋{n}": POOLS_ADD["半導體＋電腦（47 檔）"] | {sid} for sid, n in SINGLE.items()}}
 OUT = "pool_tech"
 if "add" in sys.argv:
     POOLS, OUT = POOLS_ADD, "pool_tech_add"
+elif "single" in sys.argv:
+    POOLS, OUT = POOLS_SINGLE, "pool_tech_single"
 
 
 rs.POOL = rs.ELECTRONICS      # 這個研究從電子 90 檔往下縮，基準不是正式版池子
@@ -96,9 +102,9 @@ def main():
         cfg = dr.FINAL
         po.apply(cfg); kw = po.to_kw(cfg)
         po.CONFIGS[name] = cfg
-        m = po.evaluate([name], f"pooltech_{i}").loc[name]
+        m = po.evaluate([name], f"{OUT}_{i}").loc[name]
         if i:
-            for k_, val in paired_from_files("pooltech_0", f"pooltech_{i}").items():
+            for k_, val in paired_from_files(f"{OUT}_0", f"{OUT}_{i}").items():
                 m[k_] = val
         m["檔數"] = len(keep)
         results[name] = m
@@ -112,7 +118,7 @@ def main():
     show = [c for c in ["檔數", "前7年", "前7年最差10", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差"] if c in out.columns]
     mon = pd.DataFrame(money).T
     out[show].to_csv(RESULTS / f"{OUT}_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / f"{OUT}_money.csv", encoding="utf-8-sig")
-    for f in RESULTS.glob("param_opt_pooltech_*"):
+    for f in RESULTS.glob(f"param_opt_{OUT}_*"):
         f.unlink()
     with pd.option_context("display.width", 340, "display.max_rows", 100, "display.unicode.east_asian_width", True):
         print("\n20 情境＋後 3 年（配對相對正式版）"); print(out[show].to_string())

@@ -270,7 +270,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         win_add=None, win_add_max=1, cash_rate=0.0, cash_index=None, cash_reserve=0.0,
         hedge_index=None, hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_min=0.01, hedge_cost=0.001,
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
-        hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None):
+        hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
+        hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -324,6 +325,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       hedge_idle_days=N＝現金要連續 N 個交易日都超過預備金才算「閒錢」投入（0＝當天就投；避免停利當天投入、隔天買股又被限縮）。
       避險部位計入總資產（額度＝總資產 ÷ 5 也包含它）；買股、加碼只能用現金，不會動用避險部位（除非 hedge_force）。
       eq.attrs["hedge_log"] 記錄每段避險部位的進出與損益。
+    hedge_mode="exits"（使用者 2026-11-01 第二版避險定義）：不用現金門檻，改用事件觸發——連續 hedge_trigger_exits 檔出清
+      （中間沒有新買）後開始等 hedge_wait 個交易日；等待期內主引擎沒有買進任何標的，就把當時現金的 hedge_frac 一次投入避險標的；
+      之後主引擎一買進新標的，避險部位「扣成本後不賠錢」就出場回現金（不加碼到股票）。hedge_take=None 時沒有獲利領出規則。
+      等待期內若有買進，取消這次等待、計數歸零。持有避險部位期間再出現連續出清，會再觸發一次投入（加碼避險部位）。
+      hedge_trigger_window=N：改成「最近 N 個交易日內出清 ≥ hedge_trigger_exits 檔」就觸發，出清計數不被買進歸零（較寬的解讀）。
     first_split=(keep, wait, expire)：進場節奏。首買只先買「首買金額 × keep」，剩下的錢保留，等該股在 wait 個交易日內再出現
       技術買點／加碼訊號時補進；到期沒出現：expire="add"＝直接補、"drop"＝不補（錢回到一般現金）。保留的錢仍可被其他新買點用掉。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
@@ -369,7 +375,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
     last_buy_n = -10 ** 9
     # 避險部位狀態
-    H = {"val": 0.0, "cost": 0.0, "cool": -1, "liq": False, "start": None, "armed": hedge_from == "start", "deposits": 0, "idle_run": 0}
+    H = {"val": 0.0, "cost": 0.0, "cool": -1, "liq": False, "start": None, "armed": hedge_from == "start", "deposits": 0, "idle_run": 0,
+         "exits": 0, "wait_until": None, "exit_days": []}
     earmarks = []      # [{sid, cap}]：出清後要加碼的股票與金額上限
     pool = []          # [{sid, amt, since}]：出清後等待加碼的錢（實體在 cash 裡）
     hedge_log = []
@@ -498,6 +505,14 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         proceeds = pos["shares"] * price * (1 - SELL_COST)
         cash += proceeds
         realized[0] += proceeds - pos["cost"]
+        H["exits"] += 1
+        H["exit_days"].append(n)
+        if hedge_trigger_window:
+            recent = sum(1 for k_ in H["exit_days"] if n - k_ < hedge_trigger_window)
+        else:
+            recent = H["exits"]
+        if hedge_mode == "exits" and hedge_index is not None and recent >= hedge_trigger_exits and H["wait_until"] is None:
+            H["wait_until"] = n + hedge_wait
         log(n, sid, "賣出", price, -pos["shares"], proceeds, f"{reason}；成本 {pos['cost']:.4f}，損益 {100 * (proceeds / pos['cost'] - 1):+.1f}%")
         if offset_loss and reason == "停利":
             pending_offsets.append((proceeds - pos["cost"]) * offset_frac)
@@ -535,7 +550,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 H["liq"] = False
                 if hedge_exit_cooldown:
                     H["cool"] = n + hedge_cooldown
-            elif not H["liq"] and pl_ >= hedge_take:
+            elif not H["liq"] and hedge_take is not None and pl_ >= hedge_take:
                 hedge_exit(n, f"獲利達{hedge_take:.0%}領出")
                 H["cool"] = n + hedge_cooldown
         # 出清後的加碼：等該股技術買點／加碼訊號（或等滿 hedge_add_wait 天），用保留的錢加碼；股票已賣掉就把錢放回現金
@@ -841,14 +856,32 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）"
                     + ("；啟動避險出清方案" if H["val"] > 0 else ""))
                 last_buy_n = n
-                if H["val"] > 0:        # 續抱避險期間買了股票：啟動出清方案，兩平後的錢加碼這檔
+                H["exits"] = 0
+                if not hedge_trigger_window:
+                    H["exit_days"].clear()
+                H["wait_until"] = None          # 等待期內買到股票：取消這次避險觸發
+                if H["val"] > 0:        # 續抱避險期間買了股票：啟動出清方案，兩平後的錢加碼這檔（hedge_add_cap="none" 則只回現金）
                     H["liq"] = True
-                    cap_ = (budget if hedge_add_cap == "budget" else budget * fr) - invest
-                    earmarks.append({"sid": sid, "cap": max(cap_, 0.0)})
+                    if hedge_add_cap != "none":
+                        cap_ = (budget if hedge_add_cap == "budget" else budget * fr) - invest
+                        earmarks.append({"sid": sid, "cap": max(cap_, 0.0)})
                 picked += 1
                 if zone:
                     zone_free[zone] -= 1
-        if hedge_index is not None:
+        if hedge_index is not None and hedge_mode == "exits":
+            if H["wait_until"] is not None and n >= H["wait_until"] and not H["liq"]:
+                H["wait_until"] = None
+                H["exits"] = 0
+                amt_ = cash * hedge_frac
+                if amt_ >= hedge_min * value_prev and not np.isnan(hedge_index[n]):
+                    cash -= amt_
+                    H["val"] += amt_ * (1 - hedge_cost)
+                    H["cost"] += amt_
+                    H["deposits"] += 1
+                    if H["start"] is None:
+                        H["start"] = n
+                    log(n, "避險", "避險投入", np.nan, 0.0, amt_, f"連續 {hedge_trigger_exits} 檔出清後等 {hedge_wait} 日無買進，投入現金 {hedge_frac:.0%}")
+        elif hedge_index is not None:
             if not H["armed"] and sold_today:
                 H["armed"] = True
             reserved_pool = sum(q_["amt"] for q_ in pool)

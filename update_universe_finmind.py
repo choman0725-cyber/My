@@ -105,7 +105,8 @@ class FinMind:
                 body = {}
             status = body.get("status", r.status_code)
             if r.status_code == 402 or status == 402:
-                if optional:
+                # 流量限制（msg 含 upper limit）也是 402：optional 資料集同樣要等，否則之後每檔都缺減資／股數 → 還原價、share_events 錯
+                if optional and "upper limit" not in str(body.get("msg", "")):
                     print(f"    {dataset} 回 402（{body.get('msg', '')}），本次略過此資料集")
                     self.disabled.add(dataset)
                     return pd.DataFrame()

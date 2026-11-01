@@ -53,6 +53,29 @@ def load():
     return cons, dates, data, sig
 
 
+ELEC_CATS = {"半導體業", "電腦及週邊設備業", "光電業", "通信網路業", "電子零組件業", "電子通路業", "資訊服務業", "其他電子業", "電子工業"}
+EXCL = {"2412", "3045", "4904", "2059"}          # 電信三雄、川湖（與現行名單一致）
+MANUAL_ELEC = {"2394", "3012"}                   # 普立爾、廣輝：早期併購下市，FinMind 查不到分類，依名稱歸電子
+
+
+def electronics_ids():
+    """FinMind TaiwanStockInfo 的產業分類（data/universe/industry_finmind.csv，2026-11-01 抓）→ 屬於證交所電子工業八類的代號。"""
+    ind = pd.read_csv(ps.UNI / "industry_finmind.csv", dtype=str).set_index("stock_id")["industry_category"]
+    return (set(ind[ind.isin(ELEC_CATS)].index) | MANUAL_ELEC) - EXCL
+
+
+def pools_elec(cons):
+    """全部用產業分類挑電子股：E0 0050/0056 電子工業、E1 ＋0052 電子、E2 ＋0051 電子。"""
+    el = electronics_ids()
+    f = lambda c: c[c["stock_id"].isin(el)]
+    base75 = cons["0050"][cons["0050"]["stock_id"].isin(ELECTRONICS)]
+    e0 = f(cons["0050"])
+    return {"P0 現行 75 檔（對照）": base75,
+            "E0 0050/0056 電子工業（分類法）": e0,
+            "E1 E0＋0052 電子": pd.concat([e0, f(cons["0052"])]),
+            "E2 E1＋0051 電子": pd.concat([e0, f(cons["0052"]), f(cons["0051"])])}
+
+
 def pools(cons):
     base = cons["0050"][cons["0050"]["stock_id"].isin(ELECTRONICS)]
     c52 = cons["0052"]
@@ -74,11 +97,11 @@ def setup_pool(con_df, dates, data, sig):
     return G
 
 
-def main():
+def main(elec=False):
     cons, dates, data, sig = load(); d = dates
     kw = None
     rows = []
-    for pname, con_df in pools(cons).items():
+    for pname, con_df in (pools_elec(cons) if elec else pools(cons)).items():
         G = setup_pool(con_df, dates, data, sig); kw = po.to_kw(dr.FINAL)
         n_stocks = len(G["sub"])
         for hname, hstart in HORIZONS.items():
@@ -98,10 +121,11 @@ def main():
                                  新池貢獻萬=round(top[[i for i in top.index if i not in ELECTRONICS]].sum() * cap / 1e4) if len(top) else 0,
                                  前三名=", ".join(f"{i}" for i in top.index[:3])))
         print(f"  {pname}（{n_stocks} 檔）完成", flush=True)
-    R = pd.DataFrame(rows); R.to_csv(RESULTS / "pool_expand.csv", index=False, encoding="utf-8-sig")
+    R = pd.DataFrame(rows); R.to_csv(RESULTS / ("pool_expand_elec.csv" if elec else "pool_expand.csv"), index=False, encoding="utf-8-sig")
     with pd.option_context("display.width", 320, "display.max_rows", 100, "display.max_columns", 40, "display.unicode.east_asian_width", True):
         print(R.to_string(index=False))
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(elec="--elec" in sys.argv)

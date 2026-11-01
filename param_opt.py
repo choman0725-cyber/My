@@ -131,6 +131,9 @@ def to_kw(cfg):
         kw.update(tech_exit=cfg["tech_exit"], tech_exit_profit=cfg["tech_profit"])
     if cfg.get("topup"):
         kw["topup"] = cfg["topup"]        # 2026-11-01 正式版 U1：賺錢部位買點再現補足
+    if cfg.get("hard_cap"):               # 硬上限：套牢、被剔除的部位也佔名額，同時最多持有 max_slots 檔（slot3_study）
+        kw.pop("stale_free_slot", None)
+        kw["free_slot_removed"] = False
     return kw
 
 

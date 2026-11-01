@@ -172,7 +172,7 @@ def apply(cfg):
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
     k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), str(cfg.get("growth_rel")),
-         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg.get("gen_add"), cfg.get("growth_add"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
+         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg.get("gen_rel_stat"), cfg.get("gen_add"), cfg.get("growth_add"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
@@ -203,7 +203,7 @@ def apply(cfg):
                 d["buy"], d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = buy, hyr, growth, ratio, med
                 d["yield_ok"] = np.where(growth, (np.nan_to_num(ratio, nan=0) >= gk) & prof[sid], d["yield_ok"])
                 if cfg.get("gen_rel"):      # 一般股另加：殖利率 ≥ 自己 3 年中位 × gen_rel（中位算不出來視為通過；2026-11-01 研究）
-                    r_ = ratio if not cfg.get("gen_rel_win") else rules_ext.own_median(d["yield"], G["dates"], cfg["gen_rel_win"])[0]
+                    r_ = ratio if not (cfg.get("gen_rel_win") or cfg.get("gen_rel_stat")) else                         rules_ext.own_median(d["yield"], G["dates"], cfg.get("gen_rel_win") or 750, stat=cfg.get("gen_rel_stat", "median"))[0]
                     rel_ok = np.nan_to_num(r_, nan=np.inf) >= cfg["gen_rel"]
                     d["buy"] = np.where(growth, d["buy"], d["buy"] & rel_ok)
                     d["yield_ok"] = np.where(growth, d["yield_ok"], d["yield_ok"] & rel_ok)

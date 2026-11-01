@@ -17,10 +17,11 @@ import pandas as pd
 from backtest import ROOT
 
 
-def own_median(yield_arr, dates, window=750, min_obs=250):
-    """(殖利率 ÷ 自己過去 window 日中位數, 中位數) 兩個陣列；中位數用前一日為止的資料。"""
+def own_median(yield_arr, dates, window=750, min_obs=250, stat="median"):
+    """(殖利率 ÷ 自己過去 window 日中位數, 中位數) 兩個陣列；中位數用前一日為止的資料。stat="mean" 改用平均（研究用）。"""
     y = pd.Series(yield_arr, index=dates)
-    med = y.rolling(window, min_periods=min(min_obs, window // 2)).median().shift(1)
+    r = y.rolling(window, min_periods=min(min_obs, window // 2))
+    med = (r.mean() if stat == "mean" else r.median()).shift(1)
     return (y / med).values, med.values
 
 

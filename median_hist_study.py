@@ -5,6 +5,7 @@
   正式版（現行快取）／正式版（真 3 年中位）／成長股改真 5 年中位／一般股 ≥真 5 年中位×1.00、×1.25
 用法：python median_hist_study.py（2006 快取沒有時先建，約 20 分鐘）　輸出：results/median_hist_eval.csv、median_hist_money.csv
      python median_hist_study.py gen：一般股 3 年 vs 5 年中位 × k（1.00～1.25）　輸出：results/median_gen_eval.csv、median_gen_money.csv
+     python median_hist_study.py mean：一般股 ≥ 自己 3 年／5 年平均才買（對照中位數）　輸出：results/median_mean_eval.csv、median_mean_money.csv
      python median_hist_study.py add：一般股／成長股門檻直接加 0.25、0.50 個百分點　輸出：results/median_add_eval.csv、median_add_money.csv"""
 import pickle
 import sys
@@ -36,6 +37,12 @@ VARIANTS_ADD = {"正式版（真 3 年中位）": (True, {}),
                 "一般股 ≥中位＋0.25": (True, {"gen_add": 0.25}), "一般股 ≥中位＋0.50": (True, {"gen_add": 0.50}),
                 "成長股 ≥中位×1.25＋0.25": (True, {"growth_add": 0.25}), "成長股 ≥中位×1.25＋0.50": (True, {"growth_add": 0.50}),
                 "兩者都＋0.25": (True, {"gen_add": 0.25, "growth_add": 0.25})}
+# python median_hist_study.py mean：一般股 殖利率 ≥ 自己 3 年／5 年平均（對照中位數）才買（使用者 2026-11-01）
+VARIANTS_MEAN = {"正式版（真 3 年中位）": (True, {}),
+                 "一般股 ≥3年平均": (True, {"gen_rel": 1.0, "gen_rel_stat": "mean"}),
+                 "一般股 ≥5年平均": (True, {"gen_rel": 1.0, "gen_rel_win": 1250, "gen_rel_stat": "mean"}),
+                 "一般股 ≥3年中位（對照）": (True, {"gen_rel": 1.0}),
+                 "一般股 ≥5年中位（對照）": (True, {"gen_rel": 1.0, "gen_rel_win": 1250})}
 _orig = rules_ext.own_median
 
 
@@ -48,18 +55,22 @@ def hist_median(G):
     print(f"2006 與 2017 快取的殖利率在重疊日最大差 {gap:.2e}", flush=True)
     idmap = {id(G["sub"][s]["yield"]): s for s in full}
 
-    def own_median(yield_arr, dates, window=750, min_obs=250):
+    def own_median(yield_arr, dates, window=750, min_obs=250, stat="median"):
         sid = idmap.get(id(yield_arr))
         if sid is None:
-            return _orig(yield_arr, dates, window, min_obs)
-        med = full[sid].rolling(window, min_periods=min(min_obs, window // 2)).median().shift(1).reindex(dates)
+            return _orig(yield_arr, dates, window, min_obs, stat)
+        r = full[sid].rolling(window, min_periods=min(min_obs, window // 2))
+        med = (r.mean() if stat == "mean" else r.median()).shift(1).reindex(dates)
         return (pd.Series(yield_arr, index=dates) / med).values, med.values
     return own_median
 
 
 def main():
-    gen = "gen" in sys.argv or "add" in sys.argv
-    variants, tag, outp = ((VARIANTS_ADD, "medadd", "median_add") if "add" in sys.argv else (VARIANTS_GEN, "medgen", "median_gen")) if gen         else (VARIANTS, "medhist", "median_hist")
+    modes = {"add": (VARIANTS_ADD, "medadd", "median_add"), "mean": (VARIANTS_MEAN, "medmean", "median_mean"),
+             "gen": (VARIANTS_GEN, "medgen", "median_gen")}
+    mode = next((m for m in modes if m in sys.argv), None)
+    gen = mode is not None
+    variants, tag, outp = modes[mode] if gen else (VARIANTS, "medhist", "median_hist")
     po.setup(); G = rs.G; dates = G["dates"]
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     patched = hist_median(G)

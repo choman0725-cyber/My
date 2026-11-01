@@ -271,7 +271,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_index=None, hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_min=0.01, hedge_cost=0.001,
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
-        hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None):
+        hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale"):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -330,6 +330,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       之後主引擎一買進新標的，避險部位「扣成本後不賠錢」就出場回現金（不加碼到股票）。hedge_take=None 時沒有獲利領出規則。
       等待期內若有買進，取消這次等待、計數歸零。持有避險部位期間再出現連續出清，會再觸發一次投入（加碼避險部位）。
       hedge_trigger_window=N：改成「最近 N 個交易日內出清 ≥ hedge_trigger_exits 檔」就觸發，出清計數不被買進歸零（較寬的解讀）。
+    hedge_mode="cashlevel"（使用者 2026-11-01 第三版）：觸發條件改成「現金 > hedge_reserve ×（現金＋未套牢持股市值）」，套牢股不計
+      （hedge_trap="stale"＝正式版不佔名額的定義：虧損 >30% 或持有 >1 年；"deep"＝只算虧損 >30%）。成立後等 hedge_wait 個交易日
+      （0＝當天），期間沒買進且條件仍成立 → 投入現金 × hedge_frac（hedge_frac=None＝只投入超過門檻的部分）；出場同 "exits"。
     first_split=(keep, wait, expire)：進場節奏。首買只先買「首買金額 × keep」，剩下的錢保留，等該股在 wait 個交易日內再出現
       技術買點／加碼訊號時補進；到期沒出現：expire="add"＝直接補、"drop"＝不補（錢回到一般現金）。保留的錢仍可被其他新買點用掉。
     win_add：續抱加碼。部位已達停利門檻而續抱中（tp_hit）、當天 data[sid]["win_add_ok"][p] 為 True（例如信心高）、
@@ -868,7 +871,31 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
                 picked += 1
                 if zone:
                     zone_free[zone] -= 1
-        if hedge_index is not None and hedge_mode == "exits":
+        if hedge_index is not None and hedge_mode == "cashlevel":
+            if not H["armed"] and sold_today:
+                H["armed"] = True
+            if hedge_trap == "deep":
+                base_ = cash + sum(q["shares"] * data[s_]["close_ff"][p] for s_, q in positions.items()
+                                   if data[s_]["close_ff"][p] / (q["cost"] / q["shares"]) - 1 >= -0.30)
+            else:
+                base_ = cash + sum(q["shares"] * data[s_]["close_ff"][p] for s_, q in positions.items()
+                                   if not is_stale(s_, q, p, data[s_]["close_ff"][p]))
+            cond_ = H["armed"] and cash > hedge_reserve * base_
+            if cond_ and H["wait_until"] is None and not H["liq"]:
+                H["wait_until"] = n + hedge_wait
+            if H["wait_until"] is not None and n >= H["wait_until"] and not H["liq"]:
+                H["wait_until"] = None
+                if cond_:
+                    amt_ = cash * hedge_frac if hedge_frac is not None else cash - hedge_reserve * base_
+                    if amt_ >= hedge_min * value_prev and not np.isnan(hedge_index[n]):
+                        cash -= amt_
+                        H["val"] += amt_ * (1 - hedge_cost)
+                        H["cost"] += amt_
+                        H["deposits"] += 1
+                        if H["start"] is None:
+                            H["start"] = n
+                        log(n, "避險", "避險投入", np.nan, 0.0, amt_, f"現金 > 未套牢資產 {hedge_reserve:.0%} 且等 {hedge_wait} 日無買進")
+        elif hedge_index is not None and hedge_mode == "exits":
             if H["wait_until"] is not None and n >= H["wait_until"] and not H["liq"]:
                 H["wait_until"] = None
                 H["exits"] = 0

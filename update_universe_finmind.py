@@ -273,6 +273,20 @@ def halt_gaps(prices, market_days, min_days=3):
     return out
 
 
+def _guess_type(prices, t, p, r):
+    """人工表沒有的減資：看「彌補虧損」(P÷r) 或「現金減資」((P − 10(1−r))÷r) 哪個參考價能讓恢復日開盤落在漲跌幅內
+    （2015-06-01 前 ±7%、之後 ±10%，各加 0.5% 容差）；都能就取較接近的；都不能代表已發行股數失真
+    （例如同期私募、現增），改以恢復日開盤當參考價。回傳 (股數比例, 參考價, 備註)。"""
+    o = float(prices.loc[prices["date"] == t, "open"].iloc[0])
+    lim = (0.07 if t < pd.Timestamp("2015-06-01") else 0.10) + 0.005
+    cands = [("彌補虧損", p / r), ("現金減資", (p - 10 * (1 - r)) / r)]
+    fit = [(abs(o / ref - 1), kind, ref) for kind, ref in cands if ref > 0 and abs(o / ref - 1) <= lim]
+    if fit:
+        _, kind, ref = min(fit)
+        return r, ref, f"類型未查證，依開盤推定為{kind}"
+    return p / o, o, f"類型未查證，已發行股數比例 {r:.4f} 與開盤不符（可能同時私募／現增），以恢復日開盤當參考價"
+
+
 def unlisted_reductions(lvl, prices, known, manual, sid, market_days):
     """FinMind 減資資料集（2011-01 起）沒有的減資。
     1. 已發行股數（FinMind TaiwanStockShareholding）持續減少 >2%，且 ±20 天內有停牌 ≥7 天 → 減資；
@@ -307,7 +321,7 @@ def unlisted_reductions(lvl, prices, known, manual, sid, market_days):
         if got:
             ref, share_r, note = got
         else:
-            share_r, ref, note = r, p / r, "類型未查證，視為彌補虧損"
+            share_r, ref, note = _guess_type(prices, t, p, r)
         out.append((t, ref / p, share_r, note))
     for _, m in man.iterrows():
         t = pd.Timestamp(m["date"])
@@ -604,9 +618,12 @@ def main():
         # FinMind 減資資料集沒有的減資（2011-01 以前）：已發行股數減少＋停牌
         unl = unlisted_reductions(lvl, new, known + [d for d, *_ in pol], manual, sid, market_days)
         events = adjust_events(res_all, reduction, split, [(d, k) for d, k, *_ in pol] + [(d, k) for d, k, *_ in unl])
-        extra = [(d, kind, r) for d, k, kind, r in pol if r is not None] + [(d, "減資（2011 前，見 capital_reductions_manual.csv）" if "未查證" not in note else "減資（已發行股數推算，類型未查證）", r)
+        extra = [(d, kind, r) for d, k, kind, r in pol if r is not None] + [(d, "減資（2011 前，見 capital_reductions_manual.csv）" if "未查證" not in note else ("減資（以開盤推估，比例未查證）" if "開盤當參考價" in note else "減資（已發行股數推算，類型未查證）"), r)
                                                                 for d, k, r, note in unl]
         share_rows += share_events(sid, div if sid not in ETFS else None, res_all, reduction, split, extra, lvl, warn_log, new)
+        for d, k, r, note in unl:
+            if "未查證" in note:
+                warn_log.append(f"{sid} {d:%Y-%m-%d} 減資 {note}；股數比例 {r:.4f}")
         for d, k, r, note in unl:                       # 參考價合理性：恢復日開盤應在參考價 ±10% 內
             j = new.index[new["date"] == d]
             if len(j) and j[0] > 0:

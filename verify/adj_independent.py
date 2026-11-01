@@ -39,8 +39,15 @@ for sid in ids:
         ratio = m.share_ratio if pd.notna(m.share_ratio) else float(se[(se.stock_id == sid) & (se.date == m.date)].share_ratio.iloc[0])
         ref = m.ref_price if pd.notna(m.ref_price) else (P - (m.cash_per_share if pd.notna(m.cash_per_share) else (10 * (1 - ratio) if '現金' in m.type else 0))) / ratio
         ev.append((t, ref / P)); hard.append(t)
-    for x in se[(se.stock_id == sid) & se.kind.str.contains('類型未查證')].itertuples():
-        ev.append((pd.Timestamp(x.date), 1 / x.share_ratio)); hard.append(pd.Timestamp(x.date))
+    for x in se[(se.stock_id == sid) & se.kind.str.contains('未查證')].itertuples():
+        t, P = prev_close(pd.Timestamp(x.date)); o = float(p.open[dates == t].iloc[0]); r = x.share_ratio
+        if '以開盤推估' in x.kind:
+            ref = o
+        else:   # 彌補虧損或現金減資，取能讓開盤落在漲跌幅內、且較接近的
+            lim = (0.07 if t < pd.Timestamp('2015-06-01') else 0.10) + 0.005
+            c = [(abs(o / ref - 1), ref) for ref in (P / r, (P - 10 * (1 - r)) / r) if ref > 0 and abs(o / ref - 1) <= lim]
+            ref = min(c)[1]
+        ev.append((t, ref / P)); hard.append(t)
     g = dv[dv.stock_id == sid]; agg = {}
     for x in g.itertuples():
         st = (x.StockEarningsDistribution or 0) + (x.StockStatutorySurplus or 0); cs = (x.CashEarningsDistribution or 0) + (x.CashStatutorySurplus or 0)

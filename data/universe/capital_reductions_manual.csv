@@ -18,3 +18,8 @@ stock_id,date,type,cash_per_share,ref_price,share_ratio,source
 3045,2008-02-20,現金減資,2.4,,0.76,https://apps.digitimes.com/news/a20070731PD200.html
 4904,2008-03-28,現金減資,,,0.80,https://apps.digitimes.com/news/a20070501PR205.html
 6116,2007-10-26,彌補虧損,0,,0.828,https://apps.digitimes.com/news/a20070213PM200.html
+2332,2008-02-14,現金減資（類型依開盤推定）,,,0.80,減資 20%：https://www.digitimes.com/news/a20070426PD211.html；類型未寫明，只有現金減資能讓開盤落在漲跌幅內
+2342,2009-10-14,彌補虧損,0,,0.545,減資 NT$48.1 億、剩 NT$57.6 億：https://apps.digitimes.com/news/a20090819PM200.html（同文另寫 61.23%，與金額不符、也與開盤不符）
+2388,2009-09-21,彌補虧損,0,,0.40,https://apps.digitimes.com/news/a20090427PD210.html
+2887,2010-02-03,彌補虧損,0,,0.9323,https://www.taipeitimes.com/News/biz/archives/2010/01/18/2003463789
+3051,2010-08-17,彌補虧損,0,,0.5355,https://apps.digitimes.com/news/a20100413PD210.html

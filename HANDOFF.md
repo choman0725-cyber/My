@@ -243,13 +243,14 @@ python ledger_report.py [--capital --start --contrib]
 6. 資金拆兩個帳戶各跑一套（V1 10%/5% ＋ V2 20%/4.5%）→ 標準差最低（1.4），是備選的「最穩版」。
 7. 買進濾網「連續 5 年賺錢」→ 三段平均 +0.3、最差 10% +1.3、標準差不升；前 7 年 20 情境配對 15 好／4 平／1 差。擋掉的是面板、DRAM、南電這類「殖利率高但 EPS 會轉負」的買點，和策略的虧損來源完全對應。
 
-### 11.4 其他 session 與分支
-- `ccr-fca953fb-497q7h`：本 session，做多正式版（本文件所在）。
-- `claude/sharp-johnson-yzcmqp`：放空策略 session（殖利率 <2%＋大盤空頭＋鏡像技術訊號），有自己的 SHORT_RULES.md／HANDOFF.md。
-- `claude/adoring-cannon-ouba72`：「多空策略回測」session（session_01LpxYmuNGQ3PapCV8j6ynT9），在做多正式版上疊閒錢放空，等使用者決定方向；它曾提議把三條分支合成一條。
-- `claude/nice-albattani-zeigm4`：另一條做多研究分支（股利算法、公告對照、買進底線、續抱門檻比較），其 FINAL_RULES 與本分支不同，結論都是「正式版不變」。
-- 本 session 因早期取得「觸及使用者其他 session」授權，之後只接受信任裝置的請求，其他雲端 session 讀不到它；這是交接到新 session 的原因。**新 session 請不要申請該授權**，否則會有同樣限制。
-- 資料是使用者本機 session「專案交接與設定」（session_01VJgQ5eCEF74TEYsNijD87o）用 FinMind 抓的，雲端連不到金融網站；要更新資料請使用者在本機跑，或請該 session 幫忙，成品以 Artifact 交付再用 Artifact 工具讀取。
+### 11.4 其他 session 與分支（2026-11-01 已全部合併進本分支）
+- 本分支 `ccr-fca953fb-497q7h` 是主線。2026-11-01 把其餘四個 session 分支都合併進來，**合併原則：引擎、規則、HANDOFF、FINAL_RULES 一律以本分支為準，只把他們的腳本、結果檔、文件帶進來**；他們的研究腳本是在較舊的引擎參數上寫的，要重跑可能要小改。
+  - `claude/data-audit-verify`／`claude/youthful-carson-jhzz24`（資料稽核與重抓）：資料、`update_universe_finmind.py`、`build_db.py`、`verify/`、`VERIFY_REPORT.md`、`DATA_HANDOFF.md`（資料交接）。最後一次他們加了 5 筆 2008–2010 減資到 `capital_reductions_manual.csv`（友訊、茂矽、威盛、台新金、力特，都不在正式池），日線尚未依此重算，下次 `update_universe_finmind.py --local` 會套用。
+  - `claude/sharp-johnson-yzcmqp`（放空策略）：`short_strategy.py`、`short_study.py`、`SHORT_RULES.md`、`SHORT_STUDY.md`、`daily_short_run.py`、`indicators.py` 末尾新增的 S 系列放空指標、他們的交接 `HANDOFF_short.md`。
+  - `claude/adoring-cannon-ouba72`（多空合併：閒錢放空）：`COMBO_RULES.md`、`daily_combo_run.py`、`short_combo_study.py`、`short_idle_study.py`。
+  - `claude/nice-albattani-zeigm4`（門檻敏感度）：`floor_study.py`、`hold_floor_study.py`、`haircut_study.py`、`miss_study.py`、`margin_yield_study.py`、`market_median_study.py`、`fetch_financials.py`、`data/universe/financials_all.csv`。結論（買進下限 5.0～5.2 平台、續抱 4.75 高點、進場打折一律變差）已在 11.1。
+- 放空、多空合併都**沒有納入正式版**（使用者 2026-10-31 決定做多優先；閒錢放空在 2026-11-01 的閒錢研究裡再次否決）。
+- 本地接手步驟：`LOCAL_START.md`。
 
 ### 11.5 目前狀態（2026-11-01 更新；最新摘要見第 0 節）
 - 工作目錄乾淨，所有結果已 commit／push。

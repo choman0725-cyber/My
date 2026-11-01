@@ -19,7 +19,7 @@ import portfolio_study as ps
 import robust_study as rs
 from backtest import RESULTS, ROOT
 from portfolio_contrib import irr
-from portfolio_electronics import ELECTRONICS
+from portfolio_electronics import ELECTRONICS_MANUAL_2026_10 as ELECTRONICS
 from yield_entry_study import entries
 
 START = pd.Timestamp("2006-01-01")

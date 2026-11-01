@@ -1,7 +1,7 @@
 """只買電子股的組合回測：初始資金 500 萬，顯示期末資產、各檔交易與目前持股。
 
 電子股依證交所「電子工業」分類（半導體、電腦及週邊、光電、通信網路、電子零組件、電子通路、
-資訊服務、其他電子），從 0050 / 0056 歷年成分股中挑出（ELECTRONICS 清單）；
+資訊服務、其他電子），從 0050 / 0056 歷年成分股中挑出（ELECTRONICS，2026-11-01 起由 FinMind 產業分類產生，90 檔）；
 電信業者（中華電、台灣大、遠傳）與川湖不列入。
 其餘規則同 portfolio_study.py（A 版單檔邏輯、最多 5 檔、被踢出後不新進場）。
 用法：python portfolio_electronics.py
@@ -15,18 +15,31 @@ import portfolio_study as ps
 from backtest import RESULTS, ROOT
 
 CAPITAL = 5_000_000
-ELECTRONICS = {
-    # 半導體
+ELECTRONICS_MANUAL_2026_10 = {   # 2026-11-01 以前的手工名單（75 檔），保留供對照；漏了 15 檔 2016 前離開名單的電子股
     "2303", "2311", "2325", "2330", "2337", "2344", "2379", "2408", "2441", "2449", "2454", "2458", "3034",
     "3443", "3474", "3532", "3661", "3711", "4919", "5264", "6239", "6271", "6415", "6770", "7769", "8150",
-    # 電腦及週邊、光電
     "2301", "2324", "2352", "2353", "2357", "2362", "2376", "2377", "2382", "2395", "3005", "3231", "3706",
     "4938", "6669", "2356", "2409", "3008", "3481", "6116", "6176", "2451",
-    # 通信網路（不含電信業者中華電、台灣大、遠傳）、電子零組件、電子通路、其他電子（不含川湖）
     "2345", "6285", "2439", "2308", "2327", "2368", "2383", "2385", "2392", "2474",
     "2492", "3017", "3023", "3037", "3044", "3189", "3653", "3665", "4958", "8046", "2347", "3036", "3702",
     "2317", "2354", "2360", "2404",
 }
+ELEC_CATS = {"半導體業", "電腦及週邊設備業", "光電業", "通信網路業", "電子零組件業", "電子通路業", "資訊服務業", "其他電子業", "電子工業"}
+ELEC_EXCLUDE = {"2412", "3045", "4904", "2059"}     # 電信三雄、川湖
+ELEC_MANUAL = {"2394", "3012"}                      # 普立爾、廣輝：早期併購下市，FinMind 查不到分類，依名稱歸電子
+
+
+def electronics_from_classification():
+    """2026-11-01 起的正式定義（使用者採用「分類法」）：0050／0056 歷年成分股 ∩ 證交所電子工業八類
+    （FinMind TaiwanStockInfo，data/universe/industry_finmind.csv），排除電信三雄與川湖。共 90 檔；
+    與手工名單只差 15 檔 2016 年前離開名單的股票，2017 年起的結果完全相同。"""
+    ind = pd.read_csv(ps.UNI / "industry_finmind.csv", dtype=str).set_index("stock_id")["industry_category"]
+    cons = pd.read_csv(ps.UNI / "constituents.csv", dtype=str)
+    elec = (set(ind[ind.isin(ELEC_CATS)].index) | ELEC_MANUAL) - ELEC_EXCLUDE
+    return frozenset(set(cons["stock_id"]) & elec)
+
+
+ELECTRONICS = electronics_from_classification()
 RECOMMENDED = {
     "①解讀二": {"one_per_day": True, "cooldown": 7, "target_util": 0.8, "util_mode": "invested", "first": 0.8},
 }

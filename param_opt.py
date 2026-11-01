@@ -12,7 +12,7 @@
 import itertools
 import pickle
 import sys
-from multiprocessing import Pool
+from multiprocessing import Pool, get_start_method
 
 import numpy as np
 import pandas as pd
@@ -253,14 +253,21 @@ def paired(df, names, keys, prefix):
     return out
 
 
+def _map(f, tasks):
+    """Linux（fork）用 4 個子程序；Windows／macOS（spawn）子程序拿不到 setup() 載入的 G、CONFIGS、rs.RULES，改在本程序依序算（結果相同，較慢）。"""
+    if get_start_method() != "fork":
+        return list(map(f, tasks))
+    with Pool(4) as pool:
+        return pool.map(f, tasks, chunksize=4)
+
+
 def evaluate(names, tag):
     """跑樣本內 20 情境 ＋ 後 3 年延續/單獨，回傳彙整表。
     另附與 names[0]（基準，通常放正式版或對照組）的逐情境配對統計：好/平/差 的情境數、差距中位數、最差一個情境的差距。"""
     for n in names:
         rs.RULES[n] = to_kw(CONFIGS[n])
     tasks = [(n, CONFIGS[n]["split"], st, c, 0) for n in names for st in rs.STARTS for c in rs.CONTRIBS]
-    with Pool(4) as pool:
-        res = pool.map(one_is, tasks, chunksize=4)
+    res = _map(one_is, tasks)
     df = pd.DataFrame([dict(版本=t[0], 起始=t[2], 追加=t[3], IRR=i, 回撤=m, 最長持有=h, 超過2年=p) for t, i, m, h, p in res])
     df.to_csv(RESULTS / f"param_opt_{tag}_is_runs.csv", index=False, encoding="utf-8-sig")
     g = df.groupby("版本").agg(前7年=("IRR", "median"), 前7年最差10=("IRR", lambda x: x.quantile(.1)), 前7年標準差=("IRR", "std"),
@@ -268,8 +275,7 @@ def evaluate(names, tag):
     tasks = []
     for mode, starts in (("延續", oos.STARTS_FULL), ("單獨", oos.STARTS_OOS)):
         tasks += [(mode, n, CONFIGS[n]["split"], st, c, 0) for n in names for st in starts for c in oos.CONTRIBS]
-    with Pool(4) as pool:
-        res = pool.map(one_oos, tasks, chunksize=4)
+    res = _map(one_oos, tasks)
     do = pd.DataFrame([dict(驗證=t[0], 版本=t[1], 起始=t[3], 追加=t[4], IRR=i, 回撤=m) for t, i, m, h in res])
     do.to_csv(RESULTS / f"param_opt_{tag}_oos_runs.csv", index=False, encoding="utf-8-sig")
     go = do.groupby(["驗證", "版本"]).agg(中位=("IRR", "median"), 最差10=("IRR", lambda x: x.quantile(.1)), 標準差=("IRR", "std"))

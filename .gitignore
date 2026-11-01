@@ -8,3 +8,4 @@ data/universe/_verify_cache/
 data/universe/_fubon_cache/
 data/market.db
 data/market.db.tmp
+*.zip

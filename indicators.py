@@ -543,3 +543,111 @@ KD_PV_STRATEGIES = {
     "L3 週K>D＋買進觸發／週K<D＋賣出觸發": l3_weekly_kd,
     "L4 週K>D＋買進觸發／任一賣出觸發或週KD死叉": l4_weekly_kd_any_sell,
 }
+
+
+# ---------- 策略：S 放空專用 ----------
+# 注意：這一組回傳的是 (放空, 回補)，不是 (買進, 賣出)。
+# 設計原則：順勢空用「空頭排列中的反彈／跌破」，逆勢空用「高檔區＋出貨訊號」；回補都用對稱的轉強訊號。
+
+def bear_alignment(df):
+    """空頭排列：MA5 < MA20 < MA60。"""
+    c = df["close"]
+    return (sma(c, 5) < sma(c, 20)) & (sma(c, 20) < sma(c, 60))
+
+
+def s1_break_ma60(df):
+    """順勢空：收盤跌破 MA60 且 MA20 < MA60 放空；收盤站回 MA60 回補。"""
+    c = df["close"]
+    ma20, ma60 = sma(c, 20), sma(c, 60)
+    return cross_down(c, ma60) & (ma20 < ma60), c > ma60
+
+
+def s2_bear_alignment(df):
+    """順勢空：空頭排列成立的第一天放空；MA5 站回 MA20 回補。"""
+    bear = bear_alignment(df)
+    c = df["close"]
+    return bear & ~bear.shift(1, fill_value=False), sma(c, 5) > sma(c, 20)
+
+
+def s3_bear_rally_kd(df):
+    """順勢空的拉回點：空頭排列中反彈到 MA20 以上、K > 60 死叉放空；收盤站回 MA60 回補。"""
+    c = df["close"]
+    k, d = kd(df)
+    ma20, ma60 = sma(c, 20), sma(c, 60)
+    weak = (ma20 < ma60) & (c < ma60)
+    return weak & (c > ma20 * 0.98) & cross_down(k, d) & (k > 60), c > ma60
+
+
+def s4_volume_breakdown(df):
+    """帶量跌破月線：爆量長黑（跌幅 > 2%）且收盤跌破 MA20 放空；收盤站回 MA20 回補。"""
+    c = df["close"]
+    ma20 = sma(c, 20)
+    vol_up = df["volume"] > 1.5 * sma(df["volume"], 20)
+    big_black = (c < df["open"]) & (c.pct_change() < -0.02)
+    return vol_up & big_black & (c < ma20) & (c.shift(1) >= ma20.shift(1)), c > ma20
+
+
+def s5_distribution(df):
+    """逆勢空（高檔出貨）：高檔區（近 5 日觸布林上軌且 K > 70）＋ 爆量長上影線／爆量長黑／價創高量縮 放空；
+    低檔區＋爆量下影線或長紅，或收盤站上 MA20 時回補。"""
+    low_zone, high_zone, mid, *_ = setup_zones(df)
+    t = pv_triggers(df)
+    short = high_zone & (t["wick_sell"] | t["pv_sell"])
+    cover = (low_zone & (t["wick_buy"] | t["pv_buy"])) | (df["close"] > mid) & (df["close"].shift(1) <= mid.shift(1))
+    return short, cover
+
+
+def s6_upper_band_kd(df):
+    """逆勢空：近 3 日觸布林上軌 ＋ K > 70 死叉放空；觸下軌或 KD < 30 金叉回補。"""
+    lower, _, upper = bollinger(df)
+    k, d = kd(df)
+    touched = (df["high"] >= upper).astype(int).rolling(3).max().astype(bool)
+    return touched & cross_down(k, d) & (k > 70), (df["low"] <= lower) | (cross_up(k, d) & (k < 30))
+
+
+def overbought_resonance(df, need=3, window=3):
+    """多指標超買共振：近 window 日內 KD>80／RSI>70／威廉>-20／CCI>100 至少 need 個，且當天 KD 死叉。"""
+    k, d = kd(df)
+    r, wr, cc = rsi(df["close"]), williams_r(df), cci_line(df)
+    n_ob = sum(_recent(x, window).astype(int) for x in (k > 80, r > 70, wr > -20, cc > 100))
+    n_os = sum(_recent(x, window).astype(int) for x in (k < 20, r < 30, wr < -80, cc < -100))
+    return (n_ob >= need) & cross_down(k, d), (n_os >= need) & cross_up(k, d)
+
+
+def s7_overbought(df):
+    """逆勢空：超買共振＋KD 死叉放空；超賣共振＋KD 金叉回補（不看趨勢）。"""
+    return overbought_resonance(df)
+
+
+def s8_overbought_bear(df):
+    """逆勢空（只在空頭）：超買共振＋KD 死叉且收盤在年線之下放空；超賣共振金叉或站上年線回補。"""
+    short, cover = overbought_resonance(df)
+    ma240 = sma(df["close"], 240)
+    return short & (df["close"] < ma240), cover | (df["close"] > ma240)
+
+
+def s9_bias(df, n=20, th=10):
+    """乖離過大：收盤較 MA20 正乖離 > th% 且 KD 死叉放空；乖離回到 0 以下回補。"""
+    bias = (df["close"] / sma(df["close"], n) - 1) * 100
+    k, d = kd(df)
+    return (bias > th) & cross_down(k, d), bias < 0
+
+
+def s10_new_low(df):
+    """順勢空（突破）：收盤跌破 60 日新低放空；收盤突破 20 日新高回補。"""
+    c = df["close"]
+    return c < c.rolling(60).min().shift(1), c > c.rolling(20).max().shift(1)
+
+
+SHORT_STRATEGIES = {
+    "S1 跌破MA60且MA20<MA60空／站回MA60補": s1_break_ma60,
+    "S2 空頭排列初成空／MA5站回MA20補": s2_bear_alignment,
+    "S3 空頭中反彈MA20＋KD高檔死叉空／站回MA60補": s3_bear_rally_kd,
+    "S4 爆量長黑跌破MA20空／站回MA20補": s4_volume_breakdown,
+    "S5 高檔區＋出貨訊號空／低檔買訊或站回中軌補": s5_distribution,
+    "S6 觸上軌＋KD>70死叉空／觸下軌或KD<30金叉補": s6_upper_band_kd,
+    "S7 超買共振＋KD死叉空／超賣共振金叉補": s7_overbought,
+    "S8 超買共振＋年線下空／超賣金叉或站上年線補": s8_overbought_bear,
+    "S9 正乖離>10%＋KD死叉空／乖離<0補": s9_bias,
+    "S10 跌破60日新低空／突破20日新高補": s10_new_low,
+}

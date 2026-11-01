@@ -123,6 +123,10 @@ def to_kw(cfg):
         kw["settle"] = cfg["settle"]
     if cfg.get("tranches"):
         kw["tranches"] = cfg["tranches"]
+    if cfg.get("cand_order", "yield") != "yield":
+        kw["cand_order"] = cfg["cand_order"]
+    if cfg.get("wait_better"):
+        kw["wait_better"] = cfg["wait_better"]
     if cfg.get("tech_exit"):
         kw.update(tech_exit=cfg["tech_exit"], tech_exit_profit=cfg["tech_profit"])
     if cfg.get("topup"):

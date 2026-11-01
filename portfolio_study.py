@@ -272,7 +272,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None):
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None):
     """one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -389,11 +389,16 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       tech＝出現價量／引線賣訊（爆量長上影線、爆量長黑、價創高量縮）或回本就賣；
       tech_profit＝有獲利（扣成本後不虧）且出現價量／引線賣訊才賣，虧損時續抱（仍可等 +20% 停利）。
     使用 offset_only_bad / exit_bad / removal_exit="tech" 前須先呼叫 attach_fundamentals(data, dates)。
+    cand_order：同一天買點多於空位時的優先順序。"yield"＝殖利率高者先（正式版）；"conf"＝信心值高者先、同分再比殖利率。
+    wait_better：等更好的（2026-11-01 研究）。要買 C 時，若觀察名單有「殖利率已達門檻（data[sid]["yield_ok"]）、技術面接近買點
+      （data[sid]["near_tech"]）、今天沒有買訊、在成分股、未持有、信心值比 C 高」的股票，先不買 C，最多等 wait_better 個交易日；
+      期間那些股票買到了就不再買 C；到期仍沒買到、C 的殖利率仍達門檻且在成分股，到期那天開盤買 C（首買比例用到期前一日的信心）。
     init_positions／init_cash：從實際持股起算（daily_run --holdings）。{代號: 部位 dict（同引擎內部格式，金額以 capital 為 1）}
       與起始現金（同單位）；預設 None＝從全現金 1.0 起跑。"""
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
+    waits = {}         # wait_better：{C: {"until": 到期日索引, "watch": 等的股票}}
     if init_positions is not None:
         positions = {k: dict(v) for k, v in init_positions.items()}
         cash = init_cash
@@ -887,14 +892,36 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
             free = 0
         if one_per_day:
             free = min(free, 1) if n - last_buy_n > cooldown else 0
+        forced, watch_ = set(), {}
+        if wait_better:
+            conf_ = lambda s_: data[s_]["conf_score"][p] if "conf_score" in data[s_] else 0
+            for s_, w_ in list(waits.items()):
+                if s_ in positions or w_["watch"] & set(positions):
+                    del waits[s_]
+                elif n >= w_["until"]:
+                    del waits[s_]
+                    if free > 0 and data[s_]["yield_ok"][p] and mem.get(s_, no)[p] and s_ not in sold_today:
+                        forced.add(s_)
+            if free > 0:
+                watch_ = {s_: conf_(s_) for s_ in data if s_ not in positions and s_ not in sold_today and not data[s_]["buy"][p]
+                          and data[s_]["yield_ok"][p] and data[s_]["near_tech"][p] and mem.get(s_, no)[p]}
         if free > 0:
-            cands = [(data[s_]["yield"][p], s_) for s_ in data
-                     if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p]
+            if cand_order == "conf":
+                rank = lambda s_: (data[s_]["conf_score"][p], np.nan_to_num(data[s_]["yield"][p], nan=-1))
+            else:
+                rank = lambda s_: data[s_]["yield"][p]
+            cands = [(rank(s_), s_) for s_ in data
+                     if s_ not in positions and s_ not in sold_today and (data[s_]["buy"][p] or s_ in forced)
                      and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
             picked = 0
             for _, sid in sorted(cands, reverse=True):
                 if picked >= free:
                     break
+                if wait_better and sid not in forced:
+                    better = {w for w, c in watch_.items() if c > conf_(sid)}
+                    if better:
+                        waits.setdefault(sid, {"until": n + wait_better, "watch": better})
+                        continue
                 zone = None
                 if slot_split:
                     for z, (cap, zm) in reversed(list(slot_split.items())):
@@ -1089,6 +1116,7 @@ def attach_fundamentals(data, dates):
         r = rsi(c)
         y = pd.Series(d["yield"], index=dates).reindex(px.index)
         d["near_near1"] = rx((y >= 5.0) & ((k < 30) | (r < 35) | (c <= lower * 1.03)))
+        d["near_tech"] = rx((k < 30) | (r < 35) | (c <= lower * 1.03))      # 同 near_near1 但不含殖利率（wait_better 用，殖利率另看 yield_ok）
         d["near_near2"] = rx((y >= 4.5) & ((k < 40) | (r < 40) | (c <= lower * 1.05)))
     return data
 

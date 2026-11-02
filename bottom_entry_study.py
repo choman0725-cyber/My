@@ -7,7 +7,8 @@
 一次只改一項：A、B 各自加；最後一欄 A＋B 一起加只當參考。
 用法：python bottom_entry_study.py　輸出：results/bottom_entry_eval.csv、bottom_entry_money.csv、bottom_entry_counts.csv
      python bottom_entry_study.py ma5：（2026-11-02 使用者，落底 A 嚴格採用後）B 的「沒有量縮」改用 5 日均量，k 1.0／0.8，另附 20 日均量對照
-       輸出：results/bottom_entry_ma5_*.csv"""
+       輸出：results/bottom_entry_ma5_*.csv
+     python bottom_entry_study.py kscan：B 用 5 日均量，k 掃 0.6／0.7／0.8／0.9／1.0，看 0.8 是孤峰還是平台　輸出：results/bottom_entry_kscan_*.csv"""
 import sys
 
 import numpy as np
@@ -61,6 +62,11 @@ if "ma5" in sys.argv:      # 正式版已含落底 A 嚴格（2026-11-02 晚採�
               "＋下影線站穩(量≥0.8×5日均量)": ["下影線站穩·5日量0.8"],
               "＋下影線站穩(量≥1.0×20日均量，對照)": ["下影線站穩·20日量1.0"]}
     OUT = "bottom_entry_ma5"
+if "kscan" in sys.argv:    # 2026-11-02 使用者：k=0.8 是孤峰還是平台？掃 0.6～1.0（5 日均量）
+    KS = (0.6, 0.7, 0.8, 0.9, 1.0)
+    NEW = {f"下影線站穩·5日量{k}": (lambda k_: (lambda df: bottom_b(df, k_, vol_win=5)))(k) for k in KS}
+    COMBOS = {f"＋下影線站穩(量≥{k}×5日均量)": [f"下影線站穩·5日量{k}"] for k in KS}
+    OUT = "bottom_entry_kscan"
 
 
 def build_signals(G):

@@ -147,20 +147,9 @@ def main():
         FINAL = {**FINAL, **FINAL_3}
         print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")
 
-    po.setup(); G = rs.G
+    po.setup(live=True); G = rs.G                   # 每日程式用最新資料；回測（po.setup()）截到 rs.BACKTEST_END
     if a.asof:
-        cut = pd.Timestamp(a.asof)
-        keep = G["dates"] <= cut
-        n_keep = int(keep.sum())
-        G["dates"] = G["dates"][keep]
-        for sid, d in G["sub"].items():
-            for k, v in list(d.items()):
-                if isinstance(v, np.ndarray) and len(v) == len(keep):
-                    d[k] = v[:n_keep]
-            d["last_n"] = min(d["last_n"], n_keep + 1) if d["last_n"] <= n_keep else n_keep + 1
-        G["member"] = {k: v.iloc[:n_keep] for k, v in G["member"].items()}
-        G["sig"] = {e: {sid: v[:n_keep] for sid, v in m.items()} for e, m in G["sig"].items()}
-        po._mk.clear()
+        rs.truncate(a.asof); po._mk.clear()
     po.apply(FINAL); kw = po.to_kw(FINAL)
     dates = G["dates"]
     if a.holdings:

@@ -247,8 +247,10 @@ def one_oos(t):
     apply(CONFIGS[t[1]]); return oos.one(t)
 
 
-def setup():
-    rs.setup()
+def setup(live=False):
+    """live=False（研究、驗證、check_all）：資料截到 rs.BACKTEST_END；live=True（每日程式）：用到最新一天。
+    技術買點快取 param_opt_sigs.pkl 一律以完整日曆建立，截止在載入後才做（daily_fast 要靠它的長度判斷）。"""
+    rs.setup(live=True)
     rs.SPLITS.clear(); rs.SPLITS.update(SPLITS)
     cache = RESULTS / "param_opt_sigs.pkl"
     if cache.exists():
@@ -262,6 +264,9 @@ def setup():
                 sig[k][sid] = e[k].reindex(G["dates"]).fillna(False).astype(bool).values
         G["sig"] = sig
         cache.write_bytes(pickle.dumps(sig))
+    if not live:
+        rs.truncate(rs.BACKTEST_END)
+    _mk.clear(); _applied.clear()
     # 檢查：預設參數算出的 buy 應與原始 prepared 一致
     for sid, d in G["sub"].items():
         y = d["yield"]

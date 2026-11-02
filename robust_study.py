@@ -18,6 +18,10 @@ from portfolio_electronics import CAPITAL, ELECTRONICS, POOL as _POOL
 
 POOL = _POOL   # 正式版股票池（47 檔）；要重現 2026-11-01 以前的研究（電子 90 檔）先設 POOL = ELECTRONICS 再 setup()
 
+# 回測截止日（2026-11-02 使用者：「把實際跑買股建議的程式跟回測程式分開來」）：
+# 所有研究／驗證（param_opt.evaluate、check_all、*_study.py）只用到這一天為止的資料，每天更新資料不會動到回測數字；
+# 每日程式（daily_run、daily_update、stock_fit、ledger_report）用 setup(live=True) 讀全部資料。要把回測基準往前推，改這裡並重算 check_all 的 EXPECT。
+BACKTEST_END = pd.Timestamp("2026-10-30")
 IS_END = pd.Timestamp("2023-12-31")
 STARTS = ["2017-01-03", "2017-07-03", "2018-01-02", "2018-07-02", "2019-01-02"]
 CONTRIBS = {
@@ -45,7 +49,8 @@ SPLITS = {"不分區": None, "0050區2＋0056區3": (2, 3), "0050區3＋0056區2
 G = {}
 
 
-def setup():
+def setup(live=False):
+    """live=False（研究、驗證）：資料截到 BACKTEST_END；live=True（每日程式）：用到最新一天。"""
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
@@ -56,6 +61,31 @@ def setup():
     member = ps.membership(cons[cons["stock_id"].isin(POOL)], dates)
     G.update(dates=dates, zone=zone, member=member, sub={k: v for k, v in data.items() if k in member},
              etf={e: ps.load_prices(e)[0]["close"].reindex(dates).ffill() for e in ("0050", "0056")})
+    if not live:
+        truncate(BACKTEST_END)
+
+
+def truncate(cut):
+    """把 G 裡的日曆、每檔陣列、成分股、分區、ETF、技術買點快取（有的話）全部截到 cut（含）為止。
+    每日程式 --asof 與回測截止日共用；下市標記 last_n 比日曆長 1 代表仍在市。"""
+    cut = pd.Timestamp(cut)
+    keep = G["dates"] <= cut
+    n_keep = int(keep.sum())
+    if n_keep == len(keep):
+        return
+    G["dates"] = G["dates"][keep]
+    for d in G["sub"].values():
+        for k, v in list(d.items()):
+            if isinstance(v, np.ndarray) and len(v) == len(keep):
+                d[k] = v[:n_keep]
+            elif isinstance(v, pd.DataFrame) and len(v) == len(keep):
+                d[k] = v.iloc[:n_keep]
+        d["last_n"] = d["last_n"] if d["last_n"] <= n_keep else n_keep + 1
+    G["member"] = {k: v.iloc[:n_keep] for k, v in G["member"].items()}
+    G["zone"] = {e: {k: v[:n_keep] for k, v in m.items()} for e, m in G["zone"].items()}
+    G["etf"] = {e: v.iloc[:n_keep] for e, v in G["etf"].items()}
+    if "sig" in G:
+        G["sig"] = {e: {sid: v[:n_keep] for sid, v in m.items()} for e, m in G["sig"].items()}
 
 
 def one(task):

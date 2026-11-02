@@ -211,7 +211,7 @@ def yahoo_ids(margin=0.9):
             h = ROOT / json.loads(acc_f.read_text(encoding="utf-8")).get("holdings", hold_f.name)
             if h.exists():
                 ids |= set(pd.read_csv(h, dtype={"代號": str})["代號"])
-    po.setup(); po.apply(dr.FINAL); G = rs.G; p = len(G["dates"]) - 1
+    po.setup(live=True); po.apply(dr.FINAL); G = rs.G; p = len(G["dates"]) - 1
     thr = po.buy_threshold(dr.FINAL)
     for sid, d in G["sub"].items():
         y = d["yield"][p]

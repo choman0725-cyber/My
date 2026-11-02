@@ -24,7 +24,7 @@ def main():
     ap.add_argument("--contrib", default="")
     a = ap.parse_args()
     cap = a.capital
-    po.setup(); G = rs.G; dates = G["dates"]
+    po.setup(live=True); G = rs.G; dates = G["dates"]   # 對帳單要算到最新一天
     po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
     names = pd.read_csv(ROOT / "data" / "universe" / "constituents.csv", dtype=str).drop_duplicates("stock_id").set_index("stock_id")["name"]
     s_n = dates.get_indexer([pd.Timestamp(a.start)], method="bfill")[0]

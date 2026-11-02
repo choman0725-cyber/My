@@ -15,7 +15,8 @@ from backtest import RESULTS, ROOT
 
 UNI = ROOT / "data" / "universe"
 # 2026-11-01 股票池改成半導體＋電腦及週邊 47 檔（使用者採用，pool_tech_study.py）；電子 90 檔時為 3828／4854／7 檔／25.97／21.69／2.25／24.24／29.66／24.02
-EXPECT = {"資料最後日": "2026-10-30", "2016-12-28 起期末萬": 5022, "2017-01-03 起期末萬": 5093, "持股檔數": 5,
+# 回測截止日＝robust_study.BACKTEST_END（2026-11-02 起回測與每日程式分開：每天更新資料不會動到這些數字；要往前推基準，兩邊一起改）
+EXPECT = {"回測截止日": "2026-10-30", "2016-12-28 起期末萬": 5022, "2017-01-03 起期末萬": 5093, "持股檔數": 5,
           "三段平均": 33.31, "最差10最小": 23.36, "標準差平均": 1.70, "前7年": 26.82, "延續": 35.42, "單獨": 37.71}
 fails = []
 
@@ -52,7 +53,8 @@ def main(full=False):
     miss_ind = sorted(set(cons.stock_id) - set(ind.stock_id))
     ok("產業分類覆蓋 0050/0056 成分股", miss_ind == ["3012"], f"缺 {miss_ind}（廣輝已手動歸電子）")
     tai = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])
-    ok("TAIEX 最後日", str(tai.date.max().date()) == EXPECT["資料最後日"], str(tai.date.max().date()))
+    cut = pd.Timestamp(EXPECT["回測截止日"])
+    ok("TAIEX 涵蓋回測截止日", (tai.date == cut).any(), f"最後日 {tai.date.max().date()}（回測截止 {cut.date()}）")
     last, dup, nonpos, nan_adj, short = {}, [], [], [], []
     for sid in pool:
         p = UNI / "prices" / f"{sid}.csv"
@@ -65,8 +67,11 @@ def main(full=False):
         if df.adj_close.isna().any(): nan_adj.append(sid)
     cur = cons[cons.effective_date == cons.effective_date.max()]
     active = [s for s in pool if s in set(cur.stock_id)]
-    stale = [s for s in active if str(last[s].date()) != EXPECT["資料最後日"]]
-    ok("現任成分股日線到最後日", not stale, f"{len(active)} 檔現任電子股；未到 {EXPECT['資料最後日']}：{stale}")
+    stale = [s for s in active if last[s] < cut]
+    live_last = max(last[s] for s in active)
+    n_live = sum(1 for s in active if last[s] == live_last)
+    ok("現任成分股日線到回測截止日", not stale, f"{len(active)} 檔現任電子股；未到 {cut.date()}：{stale}；"
+       f"最新一天 {live_last.date()} 有 {n_live} 檔（13:35 暫定只更新庫存＋觀察股，16:00 後應為全部）")
     ok("日線無重複日期／非正收盤／adj_close 缺值", not (dup or nonpos or nan_adj), f"重複 {dup} 非正 {nonpos} 缺值 {nan_adj}")
     eps = pd.read_csv(UNI / "eps_all.csv", dtype={"stock_id": str})
     latest = eps.groupby("stock_id")["date"].max()
@@ -94,7 +99,7 @@ def main(full=False):
     ok("results/portfolio_prepared.pkl", (RESULTS / "portfolio_prepared.pkl").exists(), "沒有的話照 HANDOFF 第 3 節重建")
     import param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps
     po.setup(); G = rs.G; d = G["dates"]; po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
-    ok("資料最後日（引擎日曆）", str(d[-1].date()) == EXPECT["資料最後日"], str(d[-1].date()))
+    ok("回測日曆截止日", str(d[-1].date()) == EXPECT["回測截止日"] == str(rs.BACKTEST_END.date()), f"{d[-1].date()}（rs.BACKTEST_END {rs.BACKTEST_END.date()}）")
     ok("引擎股票池", len(G["sub"]) == 47, f"{len(G['sub'])} 檔（2026-11-01 起半導體＋電腦及週邊；之前電子 90 檔）")
     for key, s in (("2016-12-28 起期末萬", 1), ("2017-01-03 起期末萬", d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0])):
         v = round(ps.run(G["sub"], G["member"], d, capital=5e6, start_n=s, **kw)[1].iloc[-1] * 500)

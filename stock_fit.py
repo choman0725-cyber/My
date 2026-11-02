@@ -457,7 +457,7 @@ def main():
     if not sids:
         ap.print_help(); return
 
-    po.setup()
+    po.setup(live=True)                              # 個股認證看「現在」的殖利率與買點，用最新資料
     G = rs.G
     dates = G["dates"]
     po.apply(dr.FINAL)

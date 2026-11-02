@@ -239,13 +239,11 @@ def main_yahoo(a, today):
         msg = f"# {today} 沒有新的交易日資料（Yahoo）\n\n加權指數沒有今天的收盤（休市，或 Yahoo 到 {YAHOO_GIVE_UP} 仍未更新）。\n"
         rep.write_text(msg, encoding="utf-8"); print(msg)
         return 0
-    import daily_fast
-    fast = daily_fast.fast_rebuild(list(json.loads(dy.PROV.read_text(encoding="utf-8"))["sids"]))
-    if not fast:                                    # 快取日曆對不上（例如前一天沒跑正式版）→ 全部重建
-        rebuild()
+    rebuild()                                       # 2026-11-02 使用者：13:35 也全部重建（forward_dividend 加速後約 1 分鐘），不再用 daily_fast
+    carried = carry_yield()
     lines = [f"# {today} 暫定建議（Yahoo 股市收盤資料；16:00 以 FinMind 驗證後的正式版為準）", "",
-             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；"
-             f"{'快速重建（只重算這幾檔，其他股票沿用前一天）' if fast else '全部重建'}；耗時 {(now_tw() - t0).seconds // 60} 分鐘",
+             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；全部重建；"
+             f"今天沒有價格、殖利率沿用前一天的股票 {carried} 檔（市場中位數用）；耗時 {(now_tw() - t0).seconds // 60} 分鐘",
              f"- Yahoo 沒有今天資料：{', '.join(info['miss']) or '無'}",
              f"- 原本就沒到前一個交易日（不補、等 FinMind）：{', '.join(info['skip']) or '無'}",
              "- 今天若有除權息／減資，暫定資料還沒調整，以 16:00 正式版為準", ""]
@@ -255,6 +253,30 @@ def main_yahoo(a, today):
     print("\n".join(lines))
     print(f"\n已存：{rep}")
     return 0
+
+
+def carry_yield():
+    """13:35 全部重建後：Yahoo 只補了十檔，其他在市股票今天沒有價格、殖利率是 NaN，市場殖利率中位數會只剩這十檔（多是高殖利率的觀察股）算而被拉高。
+    把「仍在市（last_n 比日曆長 1）、今天殖利率 NaN、前一天有值」的股票今天殖利率設成前一天的值（原本 daily_fast 的做法），存回快取。
+    價格、技術訊號不補（今天沒有報價就不會有買點）。只處理每日更新名單（universe()：股票池 ∪ 當天成分股）裡的股票；
+    快取裡另外約 60 檔歷史成分股不在名單、每天不更新，不在當天成分股也就不影響中位數與買賣，不碰。
+    16:00 全池更新後只剩當天停牌的幾檔會被補。回傳補了幾檔。"""
+    import pickle
+    import numpy as np
+    pkl = ROOT / "results" / "portfolio_prepared.pkl"
+    data, skipped = pickle.loads(pkl.read_bytes())
+    n = len(next(iter(data.values()))["yield"])
+    carried = 0
+    for sid in universe():
+        d = data.get(sid)
+        if d is None:
+            continue
+        y = d["yield"]
+        if d["last_n"] == n + 1 and n >= 2 and np.isnan(y[-1]) and not np.isnan(y[-2]):
+            y[-1] = y[-2]; carried += 1
+    if carried:
+        pkl.write_bytes(pickle.dumps((data, skipped)))
+    return carried
 
 
 def info_from_files(today):

@@ -36,6 +36,9 @@ FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, No
 # 3 檔版（--slots3，2026-11-01 給只能買 3 檔的人用，使用者自己的帳戶維持 5 檔）：同時最多 3 檔（套牢、被剔除也佔名額）、
 # 每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 仍 80%），其他照正式版（slot3_study.py：首買 60～70% 最好，其餘參數改了都變差）
 FINAL_3 = {"max_slots": 3, "hard_cap": True, "first": 0.65}
+# 備案 換股 18%（--switch18，2026-11-02 使用者載入備案，不是正式版）：名額滿時，持股賺 ≥18%、不是成長股，
+# 剩餘肉（殖利率 ÷ 5% − 1）比信心 ≥3 的新買點預期肉（殖利率 ÷ 5% − 1）少 10 個百分點以上 → 隔天開盤賣掉持股、換進新股（switch_study.py v7）
+FINAL_SW18 = {"switch": {"min_gain": 0.18, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}}
 # mkt=(範圍, k, 續抱k, 下限)：買進門檻＝max(當天全部 0050＋0056 成分股預估殖利率中位數 ＋ k×σ, 下限)；續抱 k=None 表示續抱維持固定 hold_yield
 # profit_years=5：買進時最近 5 個已知完整會計年度（Q4 於隔年 3/31 後視為已知）年度 EPS 全部 > 0；上市不滿 5 年以已知年度計
 RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣都隔天開盤）
@@ -132,8 +135,12 @@ def main():
     ap.add_argument("--monthly", type=float, default=0, help="每月追加金額（每月第一個交易日開盤前），例如 100000")
     ap.add_argument("--monthly-from", default=None, help="每月追加從這個月開始，例如 2026-12（預設起跑當月的下個月份起）")
     ap.add_argument("--slots3", action="store_true", help="3 檔版：同時最多 3 檔、每檔額度＝總資產 ÷ 3、首買 65%%（見 FINAL_3）")
+    ap.add_argument("--switch18", action="store_true", help="備案：換股 18%%（見 FINAL_SW18）")
     a = ap.parse_args()
     global FINAL
+    if a.switch18:
+        FINAL = {**FINAL, **FINAL_SW18}
+        print("【備案 換股 18%】名額滿時，持股賺 ≥18%（非成長股）且信心 ≥3 新買點的預期肉多 10 個百分點以上 → 隔天換股")
     if a.slots3:
         FINAL = {**FINAL, **FINAL_3}
         print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")

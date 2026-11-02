@@ -58,7 +58,7 @@ python daily_run.py --asof 2026-06-02                            # 回看某天�
 注意：它算的是「照規則從起始日跑到今天」的理論持股，不是實際帳戶。實際帳戶用 `--holdings <持股 CSV> --cash <現金>`（持股檔可加「名額」欄，一個部位佔 2 個名額）。
 
 自動排程（2026-11-02 起兩段式，`daily_update.py`）：
-- 13:35 `daily_update.py --source yahoo`（排程 tw-stock-yahoo-provisional）：只抓庫存＋觀察股（兩帳戶持股 ∪ 殖利率 ≥ 門檻×0.9 的成分股，約 10 檔）的 Yahoo 當天收盤當暫定資料（其他股票沿用前一天，市場中位數因此是前一天的；`daily_yahoo.py`；暫定列記在 `data/provisional.json`，gitignored），重建後給暫定建議 `my_reports/<日期>_暫定.md`，不 commit。
+- 13:35 `daily_update.py --source yahoo`（排程 tw-stock-yahoo-provisional）：只抓庫存＋觀察股（兩帳戶持股 ∪ 殖利率 ≥ 門檻×0.9 的成分股，約 10 檔）的 Yahoo 當天收盤當暫定資料（其他股票沿用前一天，市場中位數因此是前一天的；`daily_yahoo.py`；暫定列記在 `data/provisional.json`，gitignored），用 `daily_fast.py` 快速重建（只重算這幾檔、其他股票沿用前一天的快取並延一天，殖利率沿用前一天；約 45 秒，快取日曆對不上才全部重建），給暫定建議 `my_reports/<日期>_暫定.md`，不 commit。
 - 16:00 `daily_update.py`（排程 tw-stock-daily-advice）：等 FinMind 有今天資料 → 拿掉暫定列 → FinMind 增量更新（以 FinMind 為準）→ 報告 Yahoo vs FinMind 價格不一致的檔 → 重建、正式建議 `my_reports/<日期>.md`，並標出與暫定建議是否相同 → commit data/。
 - 帳戶：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`（廣達佔 2 名額）。都不進 git。
 - Yahoo 的成交量和 FinMind 不同（Yahoo 不含零股等，約少 2 成），爆量類技術訊號在暫定版可能和正式版不同；加權指數 Yahoo 沒有量，暫用前一天的量。

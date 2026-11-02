@@ -6,7 +6,8 @@
        用金額比：新股預期獲利（當天額度 × 首買比例〔信心 ≥3 為 80%〕× 預期%）比持股剩餘獲利（賣出金額 × 剩餘%）多 ≥ 賣出金額的 10% 就換
        輸出：results/switch_v2_*.csv
      python switch_study.py v3：使用者更正版：肉用全額（百分比）比、新股多 ≥10 個百分點；實際只投入信心首買比例，且只換進信心 ≥3（首買 80%）的新股
-       輸出：results/switch_v3_*.csv"""
+       輸出：results/switch_v3_*.csv
+     python switch_study.py v4：v3 ＋ 成長股（殖利率中位 <4%、用自己中位數買的日子）不參與換股　輸出：results/switch_v4_*.csv"""
 import sys
 
 import pandas as pd
@@ -44,6 +45,14 @@ if "v3" in sys.argv:      # 2026-11-02 使用者更正：肉用全額（百分�
                 "v3 多5%": {**dr.FINAL, "switch": {**_V3, "margin": 0.05}},
                 "v3 多20%": {**dr.FINAL, "switch": {**_V3, "margin": 0.20}}}
     OUT = "switch_v3"
+if "v4" in sys.argv:      # 2026-11-02 使用者：v3 再加「成長股不參與換股」（持股不換出、新股不換進）
+    _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
+    VARIANTS = {"正式版": dr.FINAL,
+                "v4 v3＋成長股不換（使用者）": {**dr.FINAL, "switch": _V4},
+                "v4 不限信心": {**dr.FINAL, "switch": {**_V4, "min_frac": None}},
+                "v4 多5%": {**dr.FINAL, "switch": {**_V4, "margin": 0.05}},
+                "v4 多20%": {**dr.FINAL, "switch": {**_V4, "margin": 0.20}}}
+    OUT = "switch_v4"
 
 
 def main():

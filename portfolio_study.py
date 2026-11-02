@@ -278,7 +278,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
       （剩餘肉最少的持股對預期最多的新股，逐對比較）。
       選項：hy＝固定殖利率（例如 5）取代續抱門檻；floor=False＝不設停利下限、數字＝自訂滿足點下限（純用殖利率算肉，持股已低於 hy 時剩餘為負）；
-      min_frac＝只換進首買比例 ≥ 此值的新股（信心高）；換股空出的名額優先給換進的那檔。
+      min_frac＝只換進首買比例 ≥ 此值的新股（信心高）；no_growth=True＝當天是成長股（growth_flag）的持股不換出、新股不換進；換股空出的名額優先給換進的那檔。
       money=True＝用金額比：新股預期獲利（當天額度 × 首買比例〔信心〕× 預期%）− 持股剩餘獲利（賣出金額 × 剩餘%）≥ margin × 賣出金額。
 one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
@@ -896,15 +896,16 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             fl_ = TARGET if fl_ is True else (-np.inf if fl_ is False else fl_)
             exp_ = lambda s_: max(fl_, data[s_]["yield"][p] / hy_(s_) - 1)
             mf_ = switch.get("min_frac")                  # 只換進首買比例 ≥ min_frac 的新股（信心 ≥3＝0.8）
+            ng_ = (lambda s_: switch.get("no_growth") and "growth_flag" in data[s_] and bool(data[s_]["growth_flag"][p]))   # 成長股不參與換股
             news = sorted((exp_(s_), s_) for s_ in data
                           if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p] and mem.get(s_, no)[p]
-                          and (mf_ is None or (data[s_]["first_frac"][p] if "first_frac" in data[s_] else first) >= mf_)
+                          and (mf_ is None or (data[s_]["first_frac"][p] if "first_frac" in data[s_] else first) >= mf_) and not ng_(s_)
                           and not np.isnan(data[s_]["open"][n]) and not np.isnan(data[s_]["yield"][p]))[::-1]
             olds = []
             for s_, q in positions.items():
                 c_, y_, o_ = data[s_]["close_ff"][p], data[s_]["yield"][p], data[s_]["open"][n]
                 avg_ = q["cost"] / q["shares"]
-                if s_ in sold_today or not occupies(s_, q) or np.isnan(o_) or np.isnan(y_) or c_ / avg_ - 1 < switch.get("min_gain", 0.10):
+                if s_ in sold_today or ng_(s_) or not occupies(s_, q) or np.isnan(o_) or np.isnan(y_) or c_ / avg_ - 1 < switch.get("min_gain", 0.10):
                     continue
                 olds.append((max(avg_ * (1 + fl_) if fl_ > -np.inf else 0.0, c_ * y_ / hy_(s_)) / c_ - 1, s_, o_))
             for (e_new, s_new), (r_old, s_old, o_old) in zip(news, sorted(olds)):

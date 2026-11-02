@@ -26,7 +26,7 @@ import pickle
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
@@ -36,6 +36,11 @@ ROOT = uf.ROOT
 LOOKBACK_DAYS, FUND_DAYS = 14, 400
 RETRY_MIN, GIVE_UP = 10, "18:00"
 YAHOO_GIVE_UP = "15:00"
+TW = timezone(timedelta(hours=8))                  # 一律用台北時間（電腦時區設錯也不會抓錯日期／重試截止時間）
+
+
+def now_tw():
+    return datetime.now(TW).replace(tzinfo=None)
 REPORTS = ROOT / "my_reports"
 ACCOUNT = ROOT / "my_account.json"
 HOLDINGS = ROOT / "my_holdings.csv"
@@ -48,7 +53,7 @@ def universe():
     import portfolio_electronics as pe
     import portfolio_study as ps
     cons = pd.read_csv(uf.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
-    mem = ps.membership(cons, pd.DatetimeIndex([pd.Timestamp(date.today())]))
+    mem = ps.membership(cons, pd.DatetimeIndex([pd.Timestamp(now_tw().date())]))
     return sorted({s for s, v in mem.items() if v.iloc[-1]} | set(pe.ELECTRONICS))
 
 
@@ -221,12 +226,12 @@ def main_yahoo(a, today):
     import daily_yahoo as dy
     ids = yahoo_ids()
     print(f"Yahoo 只抓庫存＋觀察股 {len(ids)} 檔：{', '.join(ids)}", flush=True)
-    t0 = datetime.now()
+    t0 = now_tw()
     while True:
         info = dy.apply(today, ids)
-        if info is not None or a.no_wait or datetime.now().strftime("%H:%M") >= YAHOO_GIVE_UP:
+        if info is not None or a.no_wait or now_tw().strftime("%H:%M") >= YAHOO_GIVE_UP:
             break
-        print(f"{datetime.now():%H:%M} Yahoo 還沒有今天的收盤，5 分鐘後重試", flush=True)
+        print(f"{now_tw():%H:%M} Yahoo 還沒有今天的收盤，5 分鐘後重試", flush=True)
         time.sleep(300)
     REPORTS.mkdir(exist_ok=True)
     rep = REPORTS / f"{today}_暫定.md"
@@ -236,7 +241,7 @@ def main_yahoo(a, today):
         return 0
     rebuild()
     lines = [f"# {today} 暫定建議（Yahoo 股市收盤資料；16:00 以 FinMind 驗證後的正式版為準）", "",
-             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；耗時 {(datetime.now() - t0).seconds // 60} 分鐘",
+             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；耗時 {(now_tw() - t0).seconds // 60} 分鐘",
              f"- Yahoo 沒有今天資料：{', '.join(info['miss']) or '無'}",
              f"- 原本就沒到前一個交易日（不補、等 FinMind）：{', '.join(info['skip']) or '無'}",
              "- 今天若有除權息／減資，暫定資料還沒調整，以 16:00 正式版為準", ""]
@@ -265,23 +270,23 @@ def main():
     ap.add_argument("--skip-advice", action="store_true")
     ap.add_argument("--source", choices=["finmind", "yahoo"], default="finmind", help="yahoo＝13:35 暫定資料（見檔頭說明）")
     a = ap.parse_args()
-    today = date.today().isoformat()
+    today = now_tw().date().isoformat()
     if a.source == "yahoo":
         return main_yahoo(a, today)
     import daily_yahoo as dy
     token = os.environ.get("FINMIND_TOKEN")
     if not token:
         raise SystemExit("沒有 FINMIND_TOKEN")
-    t0 = datetime.now()
+    t0 = now_tw()
     info, prov = None, None
     while True:
         fm = uf.FinMind(token, refresh=True)        # 重試時不能讀到「資料還沒出來」那次的快取
         if finmind_ready(fm, today):
             prov = dy.strip()                       # FinMind 有了才拿掉 Yahoo 暫定列（以 FinMind 為準）
             info = update(fm, today)
-        if info is not None or a.no_wait or datetime.now().strftime("%H:%M") >= GIVE_UP:
+        if info is not None or a.no_wait or now_tw().strftime("%H:%M") >= GIVE_UP:
             break
-        print(f"{datetime.now():%H:%M} FinMind 還沒有今天的資料，{RETRY_MIN} 分鐘後重試", flush=True)
+        print(f"{now_tw():%H:%M} FinMind 還沒有今天的資料，{RETRY_MIN} 分鐘後重試", flush=True)
         time.sleep(RETRY_MIN * 60)
     REPORTS.mkdir(exist_ok=True)
     rep = REPORTS / f"{today}.md"
@@ -292,7 +297,7 @@ def main():
         return 0
     rebuild()
     lines = [f"# {today} 每日更新與建議", "",
-             f"- 新交易日：{', '.join(info['new_days'])}；{info['n']} 檔中 {info['appended']} 檔接上新資料，FinMind 請求 {info['calls']} 次，耗時 {(datetime.now() - t0).seconds // 60} 分鐘",
+             f"- 新交易日：{', '.join(info['new_days'])}；{info['n']} 檔中 {info['appended']} 檔接上新資料，FinMind 請求 {info['calls']} 次，耗時 {(now_tw() - t0).seconds // 60} 分鐘",
              f"- 重疊日驗證不一致而整段重抓：{', '.join(info['verify_fail']) or '無'}",
              f"- 除權息／減資／分割而整段重抓：{', '.join(info['events']) or '無'}",
              f"- 新進池：{', '.join(info['report']) or '無'}",

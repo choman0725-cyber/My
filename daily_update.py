@@ -14,7 +14,7 @@
 需要環境變數 FINMIND_TOKEN。建議存在 my_reports/<日期>.md。
 
 兩段式（2026-11-02 使用者：FinMind 收盤後要等一陣子才有當天資料）：
-  13:35 python daily_update.py --source yahoo：用 Yahoo 股市當天日線當暫定資料（daily_yahoo.py），重建後給暫定建議，
+  13:35 python daily_update.py --source yahoo：只抓庫存＋觀察股（yahoo_ids）的 Yahoo 股市當天日線當暫定資料（daily_yahoo.py），重建後給暫定建議，
         存 my_reports/<日期>_暫定.md；不需要 FINMIND_TOKEN；暫定列記在 data/provisional.json，不要 commit。
   16:00 python daily_update.py（FinMind）：等 FinMind 有今天的資料 → 拿掉暫定列 → 照原流程增量更新 →
         比對 Yahoo vs FinMind（以 FinMind 為準）→ 重建、正式建議存 my_reports/<日期>.md，並標出與暫定版建議是否相同。
@@ -192,11 +192,38 @@ def actions(text):
     return out
 
 
+def yahoo_ids(margin=0.9):
+    """13:35 只抓「庫存＋觀察股」（2026-11-02 使用者；16:00 FinMind 照舊抓整個股票池）：
+    各帳戶持股檔裡的代號 ∪ 股票池中最後一天在成分股內、預估殖利率 ≥ 門檻 × margin 的股票
+    （觀察名單的條件；乘 0.9 是把今天可能跌進門檻的也抓進來）。"""
+    import numpy as np
+    import daily_run as dr
+    import param_opt as po
+    import robust_study as rs
+    ids = set()
+    for _, acc_f, hold_f in ACCOUNTS:
+        if acc_f.exists():
+            h = ROOT / json.loads(acc_f.read_text(encoding="utf-8")).get("holdings", hold_f.name)
+            if h.exists():
+                ids |= set(pd.read_csv(h, dtype={"代號": str})["代號"])
+    po.setup(); po.apply(dr.FINAL); G = rs.G; p = len(G["dates"]) - 1
+    thr = po.buy_threshold(dr.FINAL)
+    for sid, d in G["sub"].items():
+        y = d["yield"][p]
+        growth = bool(d.get("growth_flag", np.zeros(p + 1, bool))[p])
+        gate = d["own_median"][p] * dr.FINAL["growth_rel"][0] if growth else thr[p]
+        if G["member"][sid].iloc[p] and not np.isnan(y) and not np.isnan(gate) and y >= gate * margin:
+            ids.add(sid)
+    return sorted(ids)
+
+
 def main_yahoo(a, today):
     import daily_yahoo as dy
+    ids = yahoo_ids()
+    print(f"Yahoo 只抓庫存＋觀察股 {len(ids)} 檔：{', '.join(ids)}", flush=True)
     t0 = datetime.now()
     while True:
-        info = dy.apply(today, universe())
+        info = dy.apply(today, ids)
         if info is not None or a.no_wait or datetime.now().strftime("%H:%M") >= YAHOO_GIVE_UP:
             break
         print(f"{datetime.now():%H:%M} Yahoo 還沒有今天的收盤，5 分鐘後重試", flush=True)

@@ -1,6 +1,6 @@
 """收盤後先用 Yahoo 股市的日線當「暫定資料」（2026-11-02 使用者：FinMind 收盤後要等一陣子才有當天資料，
 13:35 先抓 Yahoo 給建議，16:00 再從 FinMind 下載驗證，以 FinMind 為準）。
-  apply(today)：Yahoo 有今天的 TAIEX 才做；股票池＋當天成分股（daily_update.universe）每檔接上今天一列
+  apply(today, ids)：Yahoo 有今天的 TAIEX 才做；ids（daily_update.yahoo_ids：兩個帳戶的庫存＋觀察股）每檔接上今天一列
                 （只接「前一列＝前一個交易日」的檔，adj_close＝close，與 FinMind 增量更新相同），
                 TAIEX 也接上；寫進 data/provisional.json 記下接了哪些列。
   strip()：把 provisional.json 記的列從 CSV 拿掉、回傳暫定值（FinMind 更新前呼叫）。

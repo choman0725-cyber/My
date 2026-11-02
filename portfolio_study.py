@@ -277,6 +277,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
       （剩餘肉最少的持股對預期最多的新股，逐對比較）。
+      選項：hy＝固定殖利率（例如 5）取代續抱門檻；floor=False＝不設停利下限（純用殖利率算肉，持股已低於 hy 時剩餘為負）；
+      money=True＝用金額比：新股預期獲利（當天額度 × 首買比例〔信心〕× 預期%）− 持股剩餘獲利（賣出金額 × 剩餘%）≥ margin × 賣出金額。
 one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
       committed：已投入 + 預留加碼額度 + 新部位額度 <= 總資產 × target_util（加碼額度優先保留）
@@ -886,8 +888,10 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
         counted = sum(1 for s_, q in positions.items() if occupies(s_, q))
         free = MAX_SLOTS - counted
         if switch and free <= 0 and not resting:
-            hy_ = lambda s_: data[s_]["hy_rel"][p] if "hy_rel" in data[s_] else switch.get("hy", 4.75)   # 這檔當天實際的續抱門檻
-            exp_ = lambda s_: max(TARGET, data[s_]["yield"][p] / hy_(s_) - 1)
+            fix_ = switch.get("hy")                     # 固定殖利率（例如 5）；None＝用該股當天的續抱門檻
+            hy_ = lambda s_: fix_ if fix_ else (data[s_]["hy_rel"][p] if "hy_rel" in data[s_] else 4.75)
+            fl_ = TARGET if switch.get("floor", True) else -np.inf
+            exp_ = lambda s_: max(fl_, data[s_]["yield"][p] / hy_(s_) - 1)
             news = sorted((exp_(s_), s_) for s_ in data
                           if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p] and mem.get(s_, no)[p]
                           and not np.isnan(data[s_]["open"][n]) and not np.isnan(data[s_]["yield"][p]))[::-1]
@@ -897,11 +901,21 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                 avg_ = q["cost"] / q["shares"]
                 if s_ in sold_today or not occupies(s_, q) or np.isnan(o_) or np.isnan(y_) or c_ / avg_ - 1 < switch.get("min_gain", 0.10):
                     continue
-                olds.append((max(avg_ * (1 + TARGET), c_ * y_ / hy_(s_)) / c_ - 1, s_, o_))
+                olds.append((max(avg_ * (1 + fl_) if fl_ > -np.inf else 0.0, c_ * y_ / hy_(s_)) / c_ - 1, s_, o_))
             for (e_new, s_new), (r_old, s_old, o_old) in zip(news, sorted(olds)):
-                if e_new - r_old < switch.get("margin", 0.10):
+                if switch.get("money"):
+                    # 用實際金額比：新股可投入＝當天額度 × 首買比例（信心 ≥3 為 80%），持股＝賣出可回收金額
+                    old_val = positions[s_old]["shares"] * o_old * (1 - SELL_COST)
+                    fr_ = data[s_new]["first_frac"][p] if "first_frac" in data[s_new] else first
+                    new_amt = min(cash + old_val, value_prev / MAX_SLOTS * fr_)
+                    ok_ = new_amt * e_new - old_val * r_old >= switch.get("margin", 0.10) * old_val
+                    note_ = f"持股 {old_val:.3f}×剩餘 {r_old:.0%} vs 新股 {new_amt:.3f}×預期 {e_new:.0%}"
+                else:
+                    ok_ = e_new - r_old >= switch.get("margin", 0.10)
+                    note_ = f"剩餘 {r_old:.0%} vs 新股預期 {e_new:.0%}"
+                if not ok_:
                     break
-                close_out(s_old, n, o_old, f"換股→{s_new}（剩餘 {r_old:.0%} vs 新股預期 {e_new:.0%}）")
+                close_out(s_old, n, o_old, f"換股→{s_new}（{note_}）")
                 sold_today.add(s_old)
                 free += 1
         if slot_split:

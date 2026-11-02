@@ -284,7 +284,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None):
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None):
     """switch（換股，2026-11-02 使用者）：名額滿、又出現新買點時，比較「剩餘肉」，例如 {"min_gain": 0.10, "margin": 0.10}。
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
@@ -398,6 +398,9 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
+    trend_add（多頭排列加碼，2026-11-02 使用者，trend_add_study）：例如 {"key": "trend_r3", "amount": 0.2, "cap": 1.5, "max": 2, "min_yield": 4.75}；
+      data[sid][key][p] 為 True（多頭排列訊號，首次成立日）、部位賺錢（前收 ≥ 均價）、未套牢、仍在成分股、殖利率 ≥ min_yield、
+      已加次數 < max 時，加碼「進場額度 × amount」，部位總成本不超過進場額度 × cap，補完後現金 ≥ 一筆首買（總資產 ÷ 名額 × first）。
     ind_cap：同一產業最多佔幾個名額（2026-11-02 使用者，HANDOFF 第 9 節），例如 {"cap": 3, "ind": {代號: 產業}}；
       只算佔名額的部位（套牢、被剔除的不算）與部位的 slots；超過上限的新買點跳過，空位讓給排名較後的其他產業股票。
     slot_split：分區名額，例如 {"0050": (2, member_0050), "0056": (3, member_0056)}；
@@ -843,6 +846,19 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             while pos["hit"] < len(ADD_STEPS) and c_prev / pos["first"] - 1 <= ADD_STEPS[pos["hit"]]:
                 pos["hit"] += 1
             avg_now = pos["cost"] / pos["shares"]
+            if (trend_add and trend_add["key"] in d and d[trend_add["key"]][p] and c_prev >= avg_now
+                    and not is_trapped(sid, pos, p) and mem.get(sid, no)[p] and pos.get("trend_adds", 0) < trend_add.get("max", 2)
+                    and (trend_add.get("min_yield") is None or (not np.isnan(d["yield"][p]) and d["yield"][p] >= trend_add["min_yield"]))):
+                room = pos["budget"] * trend_add.get("cap", 1.5) - pos["cost"]
+                keep_cash = value_prev / MAX_SLOTS * first
+                invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["budget"] * trend_add.get("amount", 0.2), room, cash - keep_cash))
+                if invest > 0:
+                    pos["shares"] += invest * (1 - BUY_COST) / o
+                    pos["cost"] += invest
+                    pos["trend_adds"] = pos.get("trend_adds", 0) + 1
+                    cash -= invest
+                    log(n, sid, "加碼", o, invest * (1 - BUY_COST) / o, invest, f"多頭排列加碼第{pos['trend_adds']}次（額度 {trend_add.get('amount', 0.2):.0%}）")
+                    continue
             if (win_add and pos.get("tp_hit") and c_prev > avg_now and d["add"][p] and pos.get("win_adds", 0) < win_add_max
                     and ("win_add_ok" not in d or d["win_add_ok"][p])):
                 invest = size(sid, n, min(addable_cash(n, p, value_prev, occupies), pos["shares"] * c_prev * win_add))

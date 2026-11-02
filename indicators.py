@@ -491,6 +491,28 @@ def wick_hold(df, vol_k=0.8, vol_win=5, wick_ratio=0.5):
     return (t0 & stood).fillna(False)
 
 
+def ma_align_forecast(df, r=-0.03, horizons=(1, 2), require_20_60=True, first_only=True):
+    """多頭排列（含預算／預測）訊號（2026-11-02 使用者）。
+    假設未來每天收盤變動 r，對 horizons 裡每個 h（h 天後）重算 MA5′、MA20′、MA60′（最近 n−h 天已知收盤 ＋ h 個模擬收盤），
+    每個 h 都要 MA5′ > MA20′ > MA60′；require_20_60：今天月線已在季線上（不靠模擬）。
+    r<0＝預算（禁得起回檔）、r=0＝純預測（跳漲後日線落後但兩天內必追上、或橫盤後自然形成）；horizons=(0,)＝一般「今天已排列」。
+    first_only：只取首次成立那天（每個多頭段一次）。"""
+    c = df["close"]
+
+    def ma_after(n, h):
+        fut = sum(c * (1 + r) ** j for j in range(1, h + 1)) if h else 0
+        return (c.rolling(n - h).sum() + fut) / n
+
+    ok = (sma(c, 20) > sma(c, 60)) if require_20_60 else pd.Series(True, index=c.index)
+    for h in horizons:
+        m5, m20, m60 = ma_after(5, h), ma_after(20, h), ma_after(60, h)
+        ok &= (m5 > m20) & (m20 > m60)
+    ok = ok.fillna(False).astype(bool)
+    if first_only:
+        ok &= ~ok.shift(1).fillna(False).astype(bool)
+    return ok
+
+
 def j1_zone_wick(df):
     """低檔區＋爆量長下影線買；高檔區＋爆量長上影線賣。"""
     low_zone, high_zone, *_ = setup_zones(df)

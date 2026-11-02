@@ -97,7 +97,8 @@ def monthly_contrib(dates, s_n, amount, capital, start_month, last_is_fake=False
 
 def load_holdings(path, cash, G):
     """讀實際持股 CSV，換成引擎部位格式（金額以 capital＝現金＋持股成本 為 1）。
-    欄位：代號、進場日、股數、成本（含手續費總金額）；選填：首買價、加碼次數（跌深加碼已做幾次）、定期加碼次數、額度（進場當時總資產÷5）。
+    欄位：代號、進場日、股數、成本（含手續費總金額）；選填：首買價、加碼次數（跌深加碼已做幾次）、定期加碼次數、額度（進場當時總資產÷5）、
+    名額（這個部位當成幾檔，預設 1；設 2 時佔 2 個名額，額度欄請填 2 檔份）。
     推算：首買價預設＝成本÷股數；額度預設＝成本 ÷（訊號日首買比例＋已做的跌深加碼比例）；
     最低價、已跌破的加碼階數、是否曾移出成分股、是否曾達停利門檻由進場後的歷史價格推算。"""
     h = pd.read_csv(path, dtype={"代號": str})
@@ -120,7 +121,8 @@ def load_holdings(path, cash, G):
                     "adds": adds, "hit": sum(cmin / first - 1 <= x for x in ps.ADD_STEPS), "low": np.nanmin(d["low"][st:last + 1]),
                     "removed": not G["member"][sid].iloc[st:last + 1].all(), "zone": None,
                     "tp_hit": bool(np.nanmax(d["close_ff"][st:last + 1]) * shares / cost - 1 >= FINAL["target"]),
-                    "time_adds": int(r["定期加碼次數"]) if "定期加碼次數" in h and pd.notna(r["定期加碼次數"]) else 0}
+                    "time_adds": int(r["定期加碼次數"]) if "定期加碼次數" in h and pd.notna(r["定期加碼次數"]) else 0,
+                    "slots": int(r["名額"]) if "名額" in h and pd.notna(r["名額"]) else 1}
     return capital, pos, cash / capital
 
 

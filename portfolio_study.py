@@ -432,7 +432,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
 
     def topup_target(s_, k, inv):
         fr_ = data[s_]["first_frac"][k] if "first_frac" in data[s_] else first
-        return inv / MAX_SLOTS * fr_
+        return inv / MAX_SLOTS * fr_ * (positions[s_].get("slots", 1) if s_ in positions else 1)
 
     def do_topup(s_, n, amt, note):
         nonlocal cash
@@ -495,7 +495,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
         if add_reserve is None:
             return cash
         unit = value_prev / MAX_SLOTS * first
-        free = max(MAX_SLOTS - sum(1 for s_, q in positions.items() if occupies(s_, q)), 0)
+        free = max(MAX_SLOTS - sum(q.get("slots", 1) for s_, q in positions.items() if occupies(s_, q)), 0)
         if add_reserve == "one":
             k = 1 if free > 0 else 0
         else:
@@ -887,7 +887,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             before = set(positions)
             offset(n, profit, sold_today)
             sold_today |= before - set(positions)
-        counted = sum(1 for s_, q in positions.items() if occupies(s_, q))
+        counted = sum(q.get("slots", 1) for s_, q in positions.items() if occupies(s_, q))   # slots：一個部位佔幾個名額（實際持股可設 2，預設 1）
         free = MAX_SLOTS - counted
         switch_to = set()                               # 換股空出的名額保留給換進的那檔（買進時排最前面）
         if switch and free <= 0 and not resting:

@@ -5,7 +5,11 @@
     且之後兩天收盤都不低於那天收盤 → 第三天視為落底、是買點。k 測 1.0 與 0.8。
 殖利率門檻、5 年賺錢、名額、加碼、賣出全部照正式版；只是「技術買點任一」多了一種。
 一次只改一項：A、B 各自加；最後一欄 A＋B 一起加只當參考。
-用法：python bottom_entry_study.py　輸出：results/bottom_entry_eval.csv、bottom_entry_money.csv、bottom_entry_counts.csv"""
+用法：python bottom_entry_study.py　輸出：results/bottom_entry_eval.csv、bottom_entry_money.csv、bottom_entry_counts.csv
+     python bottom_entry_study.py ma5：（2026-11-02 使用者，落底 A 嚴格採用後）B 的「沒有量縮」改用 5 日均量，k 1.0／0.8，另附 20 日均量對照
+       輸出：results/bottom_entry_ma5_*.csv"""
+import sys
+
 import numpy as np
 import pandas as pd
 
@@ -25,12 +29,12 @@ def bottom_a(df, dd=0.15, tol=0.03, lookback=60, low_win=20, strict=False):
     return bottom_hold(df, dd, tol, lookback, low_win, strict)
 
 
-def bottom_b(df, vol_k=1.0, wick_ratio=0.5):
-    """B 下影線站穩。t0 長下影線、量 ≥ vol_k × 20 日均量；t0+1、t0+2 收盤 ≥ t0 收盤；訊號日 t0+2。"""
+def bottom_b(df, vol_k=1.0, wick_ratio=0.5, vol_win=20):
+    """B 下影線站穩。t0 長下影線、量 ≥ vol_k × vol_win 日均量；t0+1、t0+2 收盤 ≥ t0 收盤；訊號日 t0+2。"""
     upper, lower, rng = shadows(df)
     big_bar = rng >= 0.8 * atr(df)
     long_lower = (lower >= wick_ratio * rng) & big_bar
-    no_shrink = df["volume"] >= vol_k * sma(df["volume"], 20)
+    no_shrink = df["volume"] >= vol_k * sma(df["volume"], vol_win)
     t0 = long_lower & no_shrink
     c = df["close"]
     stood = (c.shift(1) >= c.shift(2)) & (c >= c.shift(2))          # t0 = 兩天前
@@ -48,6 +52,15 @@ COMBOS = {  # 版本名 → 要和「任一」OR 起來的新訊號
     "＋下影線站穩(量≥1.0均量)": ["下影線站穩1.0"], "＋下影線站穩(量≥0.8均量)": ["下影線站穩0.8"],
     "＋落底A＋下影線站穩1.0（參考）": ["落底A", "下影線站穩1.0"],
 }
+OUT = "bottom_entry"
+if "ma5" in sys.argv:      # 正式版已含落底 A 嚴格（2026-11-02 晚採用），只測 B 改 5 日均量
+    NEW = {"下影線站穩·5日量1.0": lambda df: bottom_b(df, 1.0, vol_win=5),
+           "下影線站穩·5日量0.8": lambda df: bottom_b(df, 0.8, vol_win=5),
+           "下影線站穩·20日量1.0": lambda df: bottom_b(df, 1.0, vol_win=20)}
+    COMBOS = {"＋下影線站穩(量≥1.0×5日均量)": ["下影線站穩·5日量1.0"],
+              "＋下影線站穩(量≥0.8×5日均量)": ["下影線站穩·5日量0.8"],
+              "＋下影線站穩(量≥1.0×20日均量，對照)": ["下影線站穩·20日量1.0"]}
+    OUT = "bottom_entry_ma5"
 
 
 def build_signals(G):
@@ -69,7 +82,7 @@ def build_signals(G):
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
     raw, counts = build_signals(G)
-    counts.to_csv(RESULTS / "bottom_entry_counts.csv", index=False, encoding="utf-8-sig")
+    counts.to_csv(RESULTS / f"{OUT}_counts.csv", index=False, encoding="utf-8-sig")
     tot = counts.drop(columns="代號").sum()
     print("全池訊號天數（2017 起到回測截止日）：", tot.to_dict(), flush=True)
     for name, parts in COMBOS.items():
@@ -91,12 +104,12 @@ def main():
             money[(name, sn)] = dict(期末萬=round(eq.iloc[-1] * CAPITAL / 1e4), IRR=round(irr([CAPITAL], [dates[s]], eq.iloc[-1] * CAPITAL, dates[-1]), 1),
                                      回撤=round(100 * (eq / eq.cummax() - 1).min(), 1), 筆數=len(tr),
                                      勝率=round(100 * (tr["報酬%"].dropna() > 0).mean(), 0) if "報酬%" in tr else None)
-            tr.to_csv(RESULTS / f"bottom_entry_trades_{i}_{sn}.csv", index=False, encoding="utf-8-sig")
+            tr.to_csv(RESULTS / f"{OUT}_trades_{i}_{sn}.csv", index=False, encoding="utf-8-sig")
         print(f"  {name}：三段 {m['三段平均']:.2f} σ {m['標準差平均']:.2f} 最差10 {m['最差10最小']:.2f}", flush=True)
     out = pd.DataFrame(res).T
     show = [c for c in ["前7年", "前7年最差10", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差"] if c in out.columns]
     mon = pd.DataFrame(money).T
-    out[show].to_csv(RESULTS / "bottom_entry_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / "bottom_entry_money.csv", encoding="utf-8-sig")
+    out[show].to_csv(RESULTS / f"{OUT}_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / f"{OUT}_money.csv", encoding="utf-8-sig")
     for f in RESULTS.glob("param_opt_be_*"):
         f.unlink()
     with pd.option_context("display.width", 300, "display.unicode.east_asian_width", True):

@@ -1,25 +1,35 @@
 # HANDOFF：台股殖利率＋技術買點做多策略（0050／0056 電子股）
 
-最後更新：2026-11-01。接手的人（或下一個 AI 工作階段）看這份就夠了；規則細節在 `FINAL_RULES.md`。
+最後更新：2026-11-02。接手的人（或下一個 AI 工作階段）看這份就夠了；規則細節在 `FINAL_RULES.md`。
 
 ---
 
-## 0. 現況一覽（2026-11-01 交接，先看這段）
+## 0. 現況一覽（2026-11-02 交接，先看這段）
 
-**正式版＝E＋D＋U1，股票池＝0050／0056 成分股中的半導體＋電腦及週邊 47 檔（2026-11-01 起，`portfolio_electronics.POOL`）。** 所有細節在 `FINAL_RULES.md` 開頭的「現況一覽」。
+**正式版＝E＋D＋U1，股票池＝0050／0056 成分股中的半導體＋電腦及週邊 47 檔（`portfolio_electronics.POOL`）。規則與股票池 2026-11-02 整天測試後都沒有改。** 所有細節在 `FINAL_RULES.md` 開頭的「現況一覽」。
 
 | | |
 |---|---|
-| 正式設定 | `daily_run.py` 的 `FINAL`（含 `topup`＝U1）；股票池 `portfolio_electronics.ELECTRONICS`（由 `data/universe/industry_finmind.csv` 產生） |
-| 數字 | 20 情境三段 26.0、最差 10% 21.7、σ 2.25；500 萬 2017-01-03 起 4,854 萬、2016-12-28 起 3,828 萬；每月 10 萬 9,910 萬 |
-| 每日 | `python daily_run.py` → 2026-10-30、4,854 萬、持股 7 檔、沒有動作 |
-| 檢查 | `python check_all.py --full` → 2026-11-01 全部通過（編譯、資料、兩條路徑、每日程式、20 情境重現） |
+| 正式設定 | `daily_run.py` 的 `FINAL`（含 `topup`＝U1）；股票池 `portfolio_electronics.POOL`（47 檔，`data/universe/industry_twse_elec.csv`）；`ELECTRONICS`（90 檔）只是資料更新範圍 |
+| 數字 | 20 情境三段 33.31、最差 10% 23.36、σ 1.70；500 萬 2016-12-28 起 5,022 萬、2017-01-03 起 5,093 萬（`check_all.py` 的 EXPECT） |
+| 檢查 | `python check_all.py` → 2026-11-02 全部通過（--full 加 20 情境約 5 分鐘） |
+| 備案 | `daily_run.py --switch18`（換股 18%，第 8 節）、`--slots3`（3 檔版，47 檔池上不如 5 檔，見 `small_account_slots.py`） |
+| 實際帳戶 | 兩個帳戶，持股與現金只放在不進 git 的檔案（不要寫進任何會 commit 的檔）：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`（持股檔可用「名額」欄讓一個部位佔 2 名額）；B 的計畫書 `my_reports/account2_plan.md` |
+| 每日排程（台北時間） | 13:35 `tw-stock-yahoo-provisional`：`daily_update.py --source yahoo`（Yahoo 只抓庫存＋觀察股約 10 檔，`daily_fast.py` 快速重建約 45 秒，暫定建議 `my_reports/<日期>_暫定.md`）；16:00 `tw-stock-daily-advice`：`daily_update.py`（FinMind 整池更新、以 FinMind 為準、驗證 Yahoo、全部重建、正式建議 `my_reports/<日期>.md`、commit data/）。13:35 那個排程第一次執行卡在權限確認，使用者要在桌面 app 允許一次 |
+| 2026-11-02 最後建議 | 兩個帳戶都沒有動作（暫定版，16:00 正式版待確認） |
 | 資料 | FinMind（第二輪修正，`VERIFY_REPORT.md`）；CSV 為原始，`data/market.db` 由 `build_db.py` 產生；債券 ETF、0051／0052 成分股、產業分類都已在 `data/universe/` |
 | 快取（不進 git） | `results/portfolio_prepared.pkl`（2017 起，必要）、`portfolio_prepared_2006.pkl`、`portfolio_prepared_2006_all.pkl`（研究用）；重建方式見第 3 節 |
 | 待決／未做 | FinMind token 不在雲端環境變數（只影響更新資料）；每日程式「從實際持股起算」模式未做；2007 起年份是否納入正式驗證（使用者說先不用） |
 | 2026-11-01 的決定 | 採用 U1；首買不改；美債不考慮；閒錢應用不納入；0051／0052 不納入；名單改分類法；標準差不改（不加補足煞車） |
 
-今天的研究全文：`REPORT_hedge_2006.md`（第 1～16 節，每節有表與結論）。
+2026-11-01 的研究全文：`REPORT_hedge_2006.md`（第 1～16 節，每節有表與結論）。
+
+### 0.2 2026-11-02 做了什麼（細節都在第 6 節，表格一列一項）
+- **全部不採用（規則不變）**：47 檔逐檔拿掉（`pool_loo_study.py`）；換股 v1～v7＋絕對門檻版（`switch_study.py`、`pool_switch_study.py abs`；只有「賺 ≥18% 才比、成長股不換、只換信心 ≥3、新股預期肉多 10 點」四項全過但實益極小 → 備案 `--switch18`）；全部成分股當池（＋換股）比 47 檔低 10～15 點。
+- **分析（不改規則）**：每檔單獨跑三段＋情境＋每筆進出（`pool_single_period_study.py`、`results/pool_single_period.md`）；四檔 ETF 351 檔買點時間／持有時間／產業同步度／先後／接棒（`timing_study.py`→`results/timing_report.md`：同產業買點同步度 0.18～0.39 高於跨產業；通信網路、航運、建材與電子最不同步）。
+- **新功能**：引擎 `run(switch=…)`（預設關）；持股檔「名額」欄（一個部位佔 2 名額）；`small_account_slots.py`（小帳戶 5 檔 vs 3 檔）；每日兩段式（`daily_yahoo.py`、`daily_fast.py`、`daily_update.py --source yahoo`）；`daily_update` 一律台北時間、同時跑兩個帳戶。
+- **待辦（使用者設定）**：第 9 節「同一產業最多佔 2～3 個名額」實測；13:35 排程權限要使用者在 app 允許一次；Yahoo 成交量約少 2 成，暫定版爆量類訊號可能和正式版不同（以 16:00 為準）。
+- 專案資料夾裡 `BOTTOM_STUDY.md`、`NEXTDAY_STUDY.md`、`bottom*_study.py`、`nextday_study.py`、`fetch_bottom_extra.py`、`data/extra/` 不是本 session 做的、未 commit，沒有動。
 
 ### 0.1 資料修正史（2026-10-31）
 
@@ -60,7 +70,7 @@ python daily_run.py --asof 2026-06-02                            # 回看某天�
 自動排程（2026-11-02 起兩段式，`daily_update.py`）：
 - 13:35 `daily_update.py --source yahoo`（排程 tw-stock-yahoo-provisional）：只抓庫存＋觀察股（兩帳戶持股 ∪ 殖利率 ≥ 門檻×0.9 的成分股，約 10 檔）的 Yahoo 當天收盤當暫定資料（其他股票沿用前一天，市場中位數因此是前一天的；`daily_yahoo.py`；暫定列記在 `data/provisional.json`，gitignored），用 `daily_fast.py` 快速重建（只重算這幾檔、其他股票沿用前一天的快取並延一天，殖利率沿用前一天；約 45 秒，快取日曆對不上才全部重建），給暫定建議 `my_reports/<日期>_暫定.md`，不 commit。
 - 16:00 `daily_update.py`（排程 tw-stock-daily-advice）：等 FinMind 有今天資料 → 拿掉暫定列 → FinMind 增量更新（以 FinMind 為準）→ 報告 Yahoo vs FinMind 價格不一致的檔 → 重建、正式建議 `my_reports/<日期>.md`，並標出與暫定建議是否相同 → commit data/。
-- 帳戶：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`（廣達佔 2 名額）。都不進 git。
+- 帳戶：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`。都不進 git。
 - Yahoo 的成交量和 FinMind 不同（Yahoo 不含零股等，約少 2 成），爆量類技術訊號在暫定版可能和正式版不同；加權指數 Yahoo 沒有量，暫用前一天的量。
 
 ### 對帳單

@@ -277,7 +277,8 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
       （剩餘肉最少的持股對預期最多的新股，逐對比較）。
-      選項：hy＝固定殖利率（例如 5）取代續抱門檻；floor=False＝不設停利下限（純用殖利率算肉，持股已低於 hy 時剩餘為負）；
+      選項：hy＝固定殖利率（例如 5）取代續抱門檻；floor=False＝不設停利下限、數字＝自訂滿足點下限（純用殖利率算肉，持股已低於 hy 時剩餘為負）；
+      min_frac＝只換進首買比例 ≥ 此值的新股（信心高）；換股空出的名額優先給換進的那檔。
       money=True＝用金額比：新股預期獲利（當天額度 × 首買比例〔信心〕× 預期%）− 持股剩餘獲利（賣出金額 × 剩餘%）≥ margin × 賣出金額。
 one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
@@ -887,13 +888,17 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             sold_today |= before - set(positions)
         counted = sum(1 for s_, q in positions.items() if occupies(s_, q))
         free = MAX_SLOTS - counted
+        switch_to = set()                               # 換股空出的名額保留給換進的那檔（買進時排最前面）
         if switch and free <= 0 and not resting:
             fix_ = switch.get("hy")                     # 固定殖利率（例如 5）；None＝用該股當天的續抱門檻
             hy_ = lambda s_: fix_ if fix_ else (data[s_]["hy_rel"][p] if "hy_rel" in data[s_] else 4.75)
-            fl_ = TARGET if switch.get("floor", True) else -np.inf
+            fl_ = switch.get("floor", True)                # True＝停利門檻當下限；數字＝自訂滿足點（例如 0.15）；False＝不設
+            fl_ = TARGET if fl_ is True else (-np.inf if fl_ is False else fl_)
             exp_ = lambda s_: max(fl_, data[s_]["yield"][p] / hy_(s_) - 1)
+            mf_ = switch.get("min_frac")                  # 只換進首買比例 ≥ min_frac 的新股（信心 ≥3＝0.8）
             news = sorted((exp_(s_), s_) for s_ in data
                           if s_ not in positions and s_ not in sold_today and data[s_]["buy"][p] and mem.get(s_, no)[p]
+                          and (mf_ is None or (data[s_]["first_frac"][p] if "first_frac" in data[s_] else first) >= mf_)
                           and not np.isnan(data[s_]["open"][n]) and not np.isnan(data[s_]["yield"][p]))[::-1]
             olds = []
             for s_, q in positions.items():
@@ -917,6 +922,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                     break
                 close_out(s_old, n, o_old, f"換股→{s_new}（{note_}）")
                 sold_today.add(s_old)
+                switch_to.add(s_new)
                 free += 1
         if slot_split:
             used = {z: 0 for z in slot_split}
@@ -947,7 +953,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                 rank = lambda s_: (data[s_]["conf_score"][p], np.nan_to_num(data[s_]["yield"][p], nan=-1))
             else:
                 rank = lambda s_: data[s_]["yield"][p]
-            cands = [(rank(s_), s_) for s_ in data
+            cands = [((s_ in switch_to, rank(s_)), s_) for s_ in data
                      if s_ not in positions and s_ not in sold_today and (data[s_]["buy"][p] or s_ in forced)
                      and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
             picked = 0

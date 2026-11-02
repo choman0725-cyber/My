@@ -4,7 +4,9 @@
 用法：python switch_study.py　輸出：results/switch_eval.csv、results/switch_money.csv
      python switch_study.py v2：第二版（使用者 2026-11-02）：持股賺 ≥12% 才比；肉一律用 5% 殖利率價位算（不設停利下限）；
        用金額比：新股預期獲利（當天額度 × 首買比例〔信心 ≥3 為 80%〕× 預期%）比持股剩餘獲利（賣出金額 × 剩餘%）多 ≥ 賣出金額的 10% 就換
-       輸出：results/switch_v2_*.csv"""
+       輸出：results/switch_v2_*.csv
+     python switch_study.py v3：使用者更正版：肉用全額（百分比）比、新股多 ≥10 個百分點；實際只投入信心首買比例，且只換進信心 ≥3（首買 80%）的新股
+       輸出：results/switch_v3_*.csv"""
 import sys
 
 import pandas as pd
@@ -34,6 +36,14 @@ if "v2" in sys.argv:
                 "v2 金額多5%": {**dr.FINAL, "switch": {**_V2, "margin": 0.05}},
                 "v2 金額多20%": {**dr.FINAL, "switch": {**_V2, "margin": 0.20}}}
     OUT = "switch_v2"
+if "v3" in sys.argv:      # 2026-11-02 使用者更正：肉用全額（百分比）比，實際照信心首買比例投入，且只換進信心高的
+    _V3 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8}
+    VARIANTS = {"正式版": dr.FINAL,
+                "v3 賺≥12%·5%殖利率·全額比多10%·只換信心高（使用者）": {**dr.FINAL, "switch": _V3},
+                "v3 不限信心（對照）": {**dr.FINAL, "switch": {**_V3, "min_frac": None}},
+                "v3 多5%": {**dr.FINAL, "switch": {**_V3, "margin": 0.05}},
+                "v3 多20%": {**dr.FINAL, "switch": {**_V3, "margin": 0.20}}}
+    OUT = "switch_v3"
 
 
 def main():

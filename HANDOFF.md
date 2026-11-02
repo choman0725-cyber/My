@@ -15,7 +15,7 @@
 | 檢查 | `python check_all.py` → 2026-11-02 全部通過（--full 加 20 情境約 5 分鐘）。**回測與每日程式分開（2026-11-02 使用者）**：正式版設定只在 `rules_live.py`（每日程式讀），研究程式讀 `rules_research.py`（`rr.BASE`＝正式版複本，怎麼改都不影響建議）；回測資料截止日＝**`rules_research.BACKTEST_END`（目前固定 2026-10-30，使用者：先固定、有需要再調）**，`po.setup()` 自動截到這天，每日程式 `po.setup(live=True)` 讀到最新一天，所以每天更新資料不會動到 EXPECT。要往前推基準：改 `rules_research.BACKTEST_END` → 跑 `check_all --full` → 把日期和六個數字抄進 EXPECT（日期對不上會 FAIL 提醒）。設 None 才改成自動（`rs.backtest_end()`） |
 | 備案 | `daily_run.py --switch18`（換股 18%，第 8 節）、`--slots3`（3 檔版，47 檔池上不如 5 檔，見 `small_account_slots.py`） |
 | 實際帳戶 | 兩個帳戶，持股與現金只放在不進 git 的檔案（不要寫進任何會 commit 的檔）：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`（持股檔可用「名額」欄讓一個部位佔 2 名額）；B 的計畫書 `my_reports/account2_plan.md` |
-| 每日排程（台北時間） | 13:35 `tw-stock-yahoo-provisional`：`daily_update.py --source yahoo`（Yahoo 只抓庫存＋觀察股約 10 檔，`daily_fast.py` 快速重建約 45 秒，暫定建議 `my_reports/<日期>_暫定.md`）；16:00 `tw-stock-daily-advice`：`daily_update.py`（FinMind 整池更新、以 FinMind 為準、驗證 Yahoo、全部重建、正式建議 `my_reports/<日期>.md`、commit data/）。13:35 那個排程 11-02 第一次執行失敗：當時另一個 session 正在跑完整重建，`daily_update` 重建前會先刪 `portfolio_prepared.pkl`，所以找不到快取（不是權限問題）；當天暫定版是手動跑的。不要在 13:35～14:30、16:00～16:40 手動跑完整重建 |
+| 每日排程（台北時間） | 13:35 `tw-stock-yahoo-provisional`：`daily_update.py --source yahoo`（Yahoo 只抓庫存＋觀察股約 10 檔，`daily_fast.py` 快速重建約 45 秒，暫定建議 `my_reports/<日期>_暫定.md`）；16:00 `tw-stock-daily-advice`：`daily_update.py`（FinMind 整池更新、以 FinMind 為準、驗證 Yahoo、全部重建、正式建議 `my_reports/<日期>.md`、commit data/）。13:35 那個排程 11-02 第一次執行失敗：當時另一個 session 正在跑完整重建，`daily_update` 重建前會先刪 `portfolio_prepared.pkl`，所以找不到快取（不是權限問題）；當天暫定版是手動跑的。不要在 13:35～14:30、16:00～16:40 手動跑完整重建。**16:00 的重建已改快（約 1.5 分鐘含 build_db 與兩個帳戶）；若它抓完後失敗，重跑用 `--no-fetch`（不再抓、不需 token、不會撞流量限制）** |
 | 2026-11-02 最後建議 | 兩個帳戶都沒有動作（暫定版，16:00 正式版待確認） |
 | 資料 | FinMind（第二輪修正，`VERIFY_REPORT.md`）；CSV 為原始，`data/market.db` 由 `build_db.py` 產生；債券 ETF、0051／0052 成分股、產業分類都已在 `data/universe/` |
 | 快取（不進 git） | `results/portfolio_prepared.pkl`（2017 起，必要）、`portfolio_prepared_2006.pkl`、`portfolio_prepared_2006_all.pkl`（研究用）；重建方式見第 3 節 |
@@ -29,6 +29,8 @@
 - **分析（不改規則）**：每檔單獨跑三段＋情境＋每筆進出（`pool_single_period_study.py`、`results/pool_single_period.md`）；四檔 ETF 351 檔買點時間／持有時間／產業同步度／先後／接棒（`timing_study.py`→`results/timing_report.md`：同產業買點同步度 0.18～0.39 高於跨產業；通信網路、航運、建材與電子最不同步）。
 - **新功能**：引擎 `run(switch=…)`（預設關）；持股檔「名額」欄（一個部位佔 2 名額）；`small_account_slots.py`（小帳戶 5 檔 vs 3 檔）；每日兩段式（`daily_yahoo.py`、`daily_fast.py`、`daily_update.py --source yahoo`）；`daily_update` 一律台北時間、同時跑兩個帳戶。
 - **回測與每日程式分開（使用者 3 點都 OK）**：①設定檔分開 `rules_live.py`／`rules_research.py`，60 個研究程式改讀 `rr.BASE`；②回測截止日放在 `rules_research.BACKTEST_END`，使用者決定先固定 2026-10-30（設 None 才自動 `rs.backtest_end()`）；③資料與引擎仍共用（第 4、5 節）。同產業名額研究是分開前跑的（含 11-02 Yahoo 暫定行，基準 33.35／5,040、5,110），結論不受影響。
+- **全部重建 20～30 分鐘 → 約 50 秒**（使用者：「每次重建有必要嗎」）：量測後 95% 時間在 `forward_dividend` 的逐日 Python 迴圈；改成只在事件日（EPS 公布、股利公告、除息、配息率已知日）算、其他日子沿用，`verify_forward_dividend.py` 全池 186 檔逐日比對完全相同（舊 1,260 秒→新 29 秒）。全部重建變快後不需要增量快取；`daily_fast` 暫時保留，13:35 要不要改成全部重建待使用者決定。
+- **16:00 排程 11-02 卡住**：session 16:06 啟動後第一個指令（讀 token 檔）停在權限確認 1 小時 45 分，由本 session 停掉、改在本地跑 `daily_update.py`。第一次跑到重建時撞到新 `forward_dividend` 的一個邊界（2017 前就下市、日曆為空）已修；重跑整池抓取撞到 **FinMind 流量限制**（第一次已用掉配額），改加 `daily_update.py --no-fetch`（價格檔已是今天的就只做驗證＋重建＋建議，不需 token）完成。同時修了：抓完立刻刪 `provisional.json`（否則重跑時 `strip()` 會把 FinMind 的列當暫定列刪掉）、限流訊息 `flush`。
 - **同一產業最多佔 2／3／4 個名額（`ind_cap_study.py`）：全部不採用**，三段 33.35→21.4／26.8／30.6、後 3 年情境全部變差（第 6 節）。
 - **待辦（使用者設定）**：13:35 排程權限要使用者在 app 允許一次；Yahoo 成交量約少 2 成，暫定版爆量類訊號可能和正式版不同（以 16:00 為準）。
 - 專案資料夾裡 `BOTTOM_STUDY.md`、`NEXTDAY_STUDY.md`、`bottom*_study.py`、`nextday_study.py`、`fetch_bottom_extra.py`、`data/extra/` 不是本 session 做的、未 commit，沒有動。
@@ -84,7 +86,7 @@ python ledger_report.py [--capital --start --contrib]
 ### 更新資料
 1. 在能連 FinMind 的地方跑 `python update_universe_finmind.py`（預設 2006-01-01 起抓到今天，可設 `FINMIND_TOKEN`；約 900 次請求，遇流量限制自動等待、可中斷續跑）。它會更新 `data/universe/prices/*.csv`（含 adj_close）、`eps_all.csv`、`dividend_all.csv`、`dividend_result_all.csv`、`prices_manifest.csv`、`data/TAIEX.csv`，並輸出逐檔比對 `data/universe/update_report.csv`。`constituents.csv` 不在內（成分股名單只有 2015-09 起，2006–2015 的舊成分股要另外整理，可用 `--extra` 加代號）。
    - 日線改為全部用 FinMind 原始價＋自算還原價。原本 141 檔的 yfinance `close` 已做配股／分割調整，會讓殖利率（股利 ÷ close）在配股／分割前被高估，例：6669 緯穎 2020-08-11 以「殖利率 8.32%」買進，實際價約 706 元、殖利率約 2.8%。更新後回測數字會改變，需要重跑。
-2. 刪掉 `results/portfolio_prepared.pkl`，再 `python portfolio_electronics.py` 重建（含 149 檔的殖利率序列；約 3 分鐘建快取＋7 分鐘跑它附帶的回測）。**這個 pkl 被 .gitignore 排除、不在 git 裡**，新環境第一次跑時也要這樣重建；只想建快取不跑回測可用：
+2. 刪掉 `results/portfolio_prepared.pkl`，再 `python portfolio_electronics.py` 重建（含 149 檔的殖利率序列；2026-11-02 起約 50 秒建快取＋7 分鐘跑它附帶的回測）。**這個 pkl 被 .gitignore 排除、不在 git 裡**，新環境第一次跑時也要這樣重建；只想建快取不跑回測可用：
    `python -c "import pickle,pandas as pd,portfolio_study as ps;from backtest import RESULTS,ROOT;cons=pd.read_csv(ps.UNI/'constituents.csv',dtype={'stock_id':str,'etf':str});cal=pd.read_csv(ROOT/'data'/'TAIEX.csv',parse_dates=['date'])['date'];dates=pd.DatetimeIndex(cal[cal>=ps.START-pd.Timedelta(days=5)]).sort_values();(RESULTS/'portfolio_prepared.pkl').write_bytes(pickle.dumps(ps.prepare(sorted(cons['stock_id'].unique()),dates)))"`
 3. 刪掉 `results/param_opt_sigs.pkl`（技術訊號快取，這個有進 git）讓它重算。
 4. `python build_db.py` 重建 `data/market.db`（引擎優先讀 db；沒有也能跑，讀 CSV）。
@@ -271,6 +273,8 @@ python ledger_report.py [--capital --start --contrib]
 - 2026-11-01 本地 session：使用者確認**正式規則照舊**，以下三項測過、不採用，不要再測：①信心值 F4 的放量／引線改看個股（`conf_vw`；標準差 2.25→2.54、500 萬兩條路徑都較低）；②一般股另加「殖利率 ≥ 自己中位×k」（`gen_rel`，3 年／5 年中位、k 1.00～1.25，真歷史下前 7 年 15～18 個情境變差、報酬全在 2024～2026）；③成長股中位數改 5 年（前 7 年 2/0/18）；④同一天買點多於空位時改信心高者先買（`cand_order`，真歷史下 σ 2.09→2.57）；⑤觀察名單有信心更高的就先等最多 3～10 天（`wait_better`，σ 2.8～4.6）。研究細節見第 6 節最後幾列。
 
 ### 11.2 踩過的坑（接手後請避免）
+- **FinMind 流量限制**：`daily_update.py` 抓整池一次約數百次請求；同一小時內重跑第二次會卡在限流等待（最多 75 分鐘，期間沒有輸出）。抓取已成功、後面步驤失敗時一律 `python daily_update.py --no-fetch` 重跑。
+- **16:00／13:35 排程 session 的權限**：第一個 Bash 指令讀專案外的 token 檔會停在權限確認，排程看起來「running」但硬碟沒動靜；`list_task_runs` 的 `last_activity_at` 停在啟動時間就是這個狀況。
 - **價格來源**：yfinance `auto_adjust=False` 的 `close` 仍是分割／配股調整價，拿來算殖利率會高估；只能用 FinMind 原始價（或證交所）。任何新加入的候選股資料也一樣（`data/candidates/README.md`）。
 - **股數基準**：任何「每股」數字（EPS、股利）配股價時，必須先用 `share_events_all.csv` 換到同一股數基準；新增股票要補它的分割／配股／減資事件。
 - **缺價格日**：價格缺的日子殖利率要延續，不能當成「算不出來」；`yield_series()` 已處理，自己另算殖利率時注意。

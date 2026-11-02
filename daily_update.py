@@ -257,6 +257,19 @@ def main_yahoo(a, today):
     return 0
 
 
+def info_from_files(today):
+    """--no-fetch 用：從現有價格檔推算 update() 的摘要（抓取已在上一次完成）。TAIEX 最後日不是今天就回傳 None。"""
+    tai_last = pd.read_csv(ROOT / "data" / "TAIEX.csv")["date"].iloc[-1]
+    if tai_last != today:
+        return None
+    ids = universe()
+    start = (pd.Timestamp(today) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    last = {s: pd.read_csv(uf.PRICES / f"{s}.csv", usecols=["date"])["date"].iloc[-1] for s in ids if (uf.PRICES / f"{s}.csv").exists()}
+    return dict(new_days=[tai_last], n=len(ids), appended=sum(1 for v in last.values() if v == tai_last), full=[],
+                verify_fail=["（--no-fetch，本次未抓，見上一次執行）"], events=["（同左）"], report=["（同左）"],
+                lag=[s for s, v in last.items() if start <= v < tai_last], calls=0)
+
+
 def finmind_ready(fm, today):
     """FinMind 的 TAIEX 有沒有比「非暫定」資料更新的日子。"""
     import daily_yahoo as dy
@@ -272,22 +285,31 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-wait", action="store_true", help="今天資料還沒出來就直接結束，不重試")
     ap.add_argument("--skip-advice", action="store_true")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="不抓 FinMind（不需要 token）：價格檔已經是今天的（例如抓完後重建失敗、或撞到 FinMind 流量限制時重跑），只做驗證、重建、建議")
     ap.add_argument("--source", choices=["finmind", "yahoo"], default="finmind", help="yahoo＝13:35 暫定資料（見檔頭說明）")
     a = ap.parse_args()
     today = now_tw().date().isoformat()
     if a.source == "yahoo":
         return main_yahoo(a, today)
     import daily_yahoo as dy
-    token = os.environ.get("FINMIND_TOKEN")
-    if not token:
-        raise SystemExit("沒有 FINMIND_TOKEN")
     t0 = now_tw()
     info, prov = None, None
-    while True:
+    if a.no_fetch:
+        info = info_from_files(today)
+        if info is None:
+            raise SystemExit("--no-fetch：價格檔沒有今天的資料，請不帶 --no-fetch 重跑")
+        prov = json.loads(dy.PROV.read_text(encoding="utf-8")) if dy.PROV.exists() else None   # 不 strip：最後一列已是 FinMind 的
+    token = os.environ.get("FINMIND_TOKEN")
+    if not token and not a.no_fetch:
+        raise SystemExit("沒有 FINMIND_TOKEN")
+    while not a.no_fetch:
         fm = uf.FinMind(token, refresh=True)        # 重試時不能讀到「資料還沒出來」那次的快取
         if finmind_ready(fm, today):
             prov = dy.strip()                       # FinMind 有了才拿掉 Yahoo 暫定列（以 FinMind 為準）
             info = update(fm, today)
+            if info is not None:
+                dy.PROV.unlink(missing_ok=True)     # 抓完就刪：之後若重建失敗用 --no-fetch 重跑，strip 不會再把 FinMind 的列當暫定列刪掉；驗證用記憶體裡的 prov
         if info is not None or a.no_wait or now_tw().strftime("%H:%M") >= GIVE_UP:
             break
         print(f"{now_tw():%H:%M} FinMind 還沒有今天的資料，{RETRY_MIN} 分鐘後重試", flush=True)
@@ -310,7 +332,7 @@ def main():
         bad, vol, none = dy.verify(prov)
         lines += [f"- Yahoo 暫定資料驗證（{prov['date']}，{len(prov['sids'])} 檔，以 FinMind 為準）：價格不一致 {len(bad)} 檔"
                   + (f"：{'；'.join(bad)}" if bad else "") + f"；成交量差 >1% {vol} 檔；FinMind 沒有這天：{', '.join(none) or '無'}", ""]
-        dy.PROV.unlink()
+        dy.PROV.unlink(missing_ok=True)
     if not a.skip_advice:
         lines += account_sections()
         pre = REPORTS / f"{today}_暫定.md"

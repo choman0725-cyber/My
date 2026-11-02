@@ -137,8 +137,13 @@ def dividend_events(div_all, stock_id, res_all=None, share_all=None):
 
 
 def forward_dividend(dates, eps, div, payout_years=3):
+    """每日預估股利（每股現金）。規則：年配股在「已公告、尚未除息」期間用公告值；否則用近四季已公布 EPS 合計（負值視為 0）
+    × 近 3 個已知年度配息率（各年 clip 0～2）的平均；年度配息率在「該年度最後一次股利公告日」與「隔年 4/1」較晚者之後才算已知。
+    2026-11-02 改成只在「事件日」算（EPS 公布日、股利公告日、除息日、配息率已知日），其他日子沿用前一個事件日的值：
+    上面每個條件都只在這些日子改變，所以逐日結果與原本一天一天算完全相同（verify_forward_dividend.py 全池逐日比對），
+    單檔由 3～4 秒降到 0.05 秒以下，全池重建不再需要 20～30 分鐘。"""
     out = pd.Series(np.nan, index=dates)
-    if eps.empty or div.empty:
+    if eps.empty or div.empty or len(dates) == 0:      # 2017 前就下市的股票：日曆與價格沒有重疊，dates 為空
         return out
     annual_eps = eps.groupby("fy")["eps"].agg(["sum", "size"])
     annual_eps = annual_eps[annual_eps["size"] == 4]["sum"]
@@ -147,19 +152,26 @@ def forward_dividend(dates, eps, div, payout_years=3):
     by_fy["known_from"] = [max(a, pd.Timestamp(fy + 1, 4, 1)) for fy, a in zip(by_fy.index, by_fy["last_ann"])]
     annual_payer = (by_fy["n"] == 1).all()
     eps_pub, eps_val = eps["published"].values, eps["eps"].values
-    for t in dates:
+
+    def value_at(t):
         if annual_payer:
             pending = div[(div["announced"] <= t) & (div["ex_date"] > t)]
             if len(pending):
-                out[t] = pending["cash"].iloc[-1]
-                continue
+                return pending["cash"].iloc[-1]
         k = np.searchsorted(eps_pub, np.datetime64(t), side="right")
         if k < 4:
-            continue
+            return np.nan
         ttm = eps_val[k - 4:k].sum()
         known = by_fy[(by_fy["known_from"] <= t) & by_fy["payout"].notna()]["payout"].iloc[-payout_years:]
-        if len(known):
-            out[t] = max(ttm, 0) * known.clip(0, 2).mean()
+        return max(ttm, 0) * known.clip(0, 2).mean() if len(known) else np.nan
+
+    events = pd.DatetimeIndex(pd.concat([eps["published"], div["announced"], div["ex_date"], by_fy["known_from"]]).dropna().unique()).sort_values()
+    events = events[events <= dates[-1]]
+    if len(events) == 0:
+        return out
+    vals = np.array([value_at(t) for t in events], dtype=float)
+    idx = np.searchsorted(events.values, dates.values, side="right") - 1      # 每一天對應最後一個 ≤ 它的事件日；之前沒有事件 → NaN
+    out[:] = np.where(idx >= 0, vals[np.clip(idx, 0, None)], np.nan)
     return out
 
 

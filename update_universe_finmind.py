@@ -112,7 +112,7 @@ class FinMind:
                     return pd.DataFrame()
                 if waited >= 75 * 60:
                     raise RuntimeError("等待流量限制超過 75 分鐘，請稍後重跑（已抓的會從快取接續）")
-                print(f"    FinMind 流量限制（本次已抓 {self.calls} 次），5 分鐘後續抓… {body.get('msg', '')}")
+                print(f"    FinMind 流量限制（本次已抓 {self.calls} 次），5 分鐘後續抓… {body.get('msg', '')}", flush=True)
                 time.sleep(300)
                 waited += 300
                 continue

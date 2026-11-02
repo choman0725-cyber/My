@@ -87,7 +87,7 @@ def one(task):
         d = dates[n]
         rets.loc[d] = (eq.loc[d] - contrib[n]) / eq.shift(1).loc[d] - 1
     nav = (1 + rets.fillna(0)).cumprod()
-    held = (tr["出場"].fillna(dates[e_n]) - tr["進場"]).dt.days
+    held = (pd.to_datetime(tr["出場"]).fillna(dates[e_n]) - pd.to_datetime(tr["進場"])).dt.days   # 沒有成交時欄位不是日期型別
     return (task, irr(flows, flow_dates, final, dates[e_n]), 100 * (nav / nav.cummax() - 1).min(),
             held.max() / 365 if len(held) else 0, 100 * (held > 730).mean() if len(held) else 0)
 

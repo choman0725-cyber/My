@@ -23,7 +23,7 @@ POOL = _POOL   # 正式版股票池（47 檔）；要重現 2026-11-01 以前的
 def backtest_end():
     """回測資料截止日（2026-11-02 使用者：回測跟到最新、但自動）：股票池裡仍在市（最後報價距 TAIEX 最後日 10 天內）
     的股票，最後報價日的最小值＝「最近一個全池都更新完的交易日」。13:35 Yahoo 暫定只更新十檔，所以當天下午仍是前一個交易日；
-    16:00 FinMind 全池更新後才會往前一天。check_all 不用這個，自己指定固定日期（setup(end=...)）當標準答案。"""
+    16:00 FinMind 全池更新後才會往前一天。只在 rules_research.BACKTEST_END 設 None 時使用；目前固定 2026-10-30。"""
     tai = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"].max()
     last = {}
     for sid in POOL:
@@ -61,8 +61,7 @@ G = {}
 
 
 def setup(live=False, end=None):
-    """live=True（每日程式）：用到最新一天。live=False（研究、驗證）：資料截到 end；end=None 用 backtest_end()（自動），
-    check_all 傳固定日期。"""
+    """live=True（每日程式）：用到最新一天。live=False（研究、驗證）：資料截到 end；end=None 用 rules_research.BACKTEST_END。"""
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
@@ -74,7 +73,13 @@ def setup(live=False, end=None):
     G.update(dates=dates, zone=zone, member=member, sub={k: v for k, v in data.items() if k in member},
              etf={e: ps.load_prices(e)[0]["close"].reindex(dates).ffill() for e in ("0050", "0056")})
     if not live:
-        truncate(end or backtest_end())
+        truncate(end or default_end())
+
+
+def default_end():
+    """研究預設截止日：rules_research.BACKTEST_END；None 才自動（backtest_end）。延後 import 避免循環。"""
+    import rules_research as rr
+    return rr.BACKTEST_END or backtest_end()
 
 
 def truncate(cut):

@@ -12,7 +12,7 @@
 |---|---|
 | 正式設定 | `rules_live.py` 的 `FINAL`（含 `topup`＝U1；`daily_run.FINAL` 同一個）；股票池 `portfolio_electronics.POOL`（47 檔，`data/universe/industry_twse_elec.csv`）；`ELECTRONICS`（90 檔）只是資料更新範圍 |
 | 數字 | 20 情境三段 33.31、最差 10% 23.36、σ 1.70；500 萬 2016-12-28 起 5,022 萬、2017-01-03 起 5,093 萬（`check_all.py` 的 EXPECT） |
-| 檢查 | `python check_all.py` → 2026-11-02 全部通過（--full 加 20 情境約 5 分鐘）。**回測與每日程式分開（2026-11-02 使用者）**：正式版設定只在 `rules_live.py`（每日程式讀），研究程式讀 `rules_research.py`（`rr.BASE`＝正式版複本，怎麼改都不影響建議）；回測資料截止日自動＝`robust_study.backtest_end()`（最近一個全池更新完的交易日，`po.setup()`），每日程式 `po.setup(live=True)` 讀到最新一天；check_all 自己把固定日期 2026-10-30 傳給 `po.setup(end=…)`，所以每天更新資料不會動到 EXPECT。要往前推基準：改 check_all 的「回測截止日」、跑 --full、抄六個數字 |
+| 檢查 | `python check_all.py` → 2026-11-02 全部通過（--full 加 20 情境約 5 分鐘）。**回測與每日程式分開（2026-11-02 使用者）**：正式版設定只在 `rules_live.py`（每日程式讀），研究程式讀 `rules_research.py`（`rr.BASE`＝正式版複本，怎麼改都不影響建議）；回測資料截止日＝**`rules_research.BACKTEST_END`（目前固定 2026-10-30，使用者：先固定、有需要再調）**，`po.setup()` 自動截到這天，每日程式 `po.setup(live=True)` 讀到最新一天，所以每天更新資料不會動到 EXPECT。要往前推基準：改 `rules_research.BACKTEST_END` → 跑 `check_all --full` → 把日期和六個數字抄進 EXPECT（日期對不上會 FAIL 提醒）。設 None 才改成自動（`rs.backtest_end()`） |
 | 備案 | `daily_run.py --switch18`（換股 18%，第 8 節）、`--slots3`（3 檔版，47 檔池上不如 5 檔，見 `small_account_slots.py`） |
 | 實際帳戶 | 兩個帳戶，持股與現金只放在不進 git 的檔案（不要寫進任何會 commit 的檔）：A＝`my_account.json`＋`my_holdings.csv`；B＝`my_account2.json`＋`my_holdings_account2.csv`（持股檔可用「名額」欄讓一個部位佔 2 名額）；B 的計畫書 `my_reports/account2_plan.md` |
 | 每日排程（台北時間） | 13:35 `tw-stock-yahoo-provisional`：`daily_update.py --source yahoo`（Yahoo 只抓庫存＋觀察股約 10 檔，`daily_fast.py` 快速重建約 45 秒，暫定建議 `my_reports/<日期>_暫定.md`）；16:00 `tw-stock-daily-advice`：`daily_update.py`（FinMind 整池更新、以 FinMind 為準、驗證 Yahoo、全部重建、正式建議 `my_reports/<日期>.md`、commit data/）。13:35 那個排程 11-02 第一次執行失敗：當時另一個 session 正在跑完整重建，`daily_update` 重建前會先刪 `portfolio_prepared.pkl`，所以找不到快取（不是權限問題）；當天暫定版是手動跑的。不要在 13:35～14:30、16:00～16:40 手動跑完整重建 |
@@ -28,7 +28,7 @@
 - **全部不採用（規則不變）**：47 檔逐檔拿掉（`pool_loo_study.py`）；換股 v1～v7＋絕對門檻版（`switch_study.py`、`pool_switch_study.py abs`；只有「賺 ≥18% 才比、成長股不換、只換信心 ≥3、新股預期肉多 10 點」四項全過但實益極小 → 備案 `--switch18`）；全部成分股當池（＋換股）比 47 檔低 10～15 點。
 - **分析（不改規則）**：每檔單獨跑三段＋情境＋每筆進出（`pool_single_period_study.py`、`results/pool_single_period.md`）；四檔 ETF 351 檔買點時間／持有時間／產業同步度／先後／接棒（`timing_study.py`→`results/timing_report.md`：同產業買點同步度 0.18～0.39 高於跨產業；通信網路、航運、建材與電子最不同步）。
 - **新功能**：引擎 `run(switch=…)`（預設關）；持股檔「名額」欄（一個部位佔 2 名額）；`small_account_slots.py`（小帳戶 5 檔 vs 3 檔）；每日兩段式（`daily_yahoo.py`、`daily_fast.py`、`daily_update.py --source yahoo`）；`daily_update` 一律台北時間、同時跑兩個帳戶。
-- **回測與每日程式分開（使用者 3 點都 OK）**：①設定檔分開 `rules_live.py`／`rules_research.py`，60 個研究程式改讀 `rr.BASE`；②回測截止日自動 `rs.backtest_end()`，check_all 自己指定 10-30 當標準答案；③資料與引擎仍共用（第 4、5 節）。同產業名額研究是分開前跑的（含 11-02 Yahoo 暫定行，基準 33.35／5,040、5,110），結論不受影響。
+- **回測與每日程式分開（使用者 3 點都 OK）**：①設定檔分開 `rules_live.py`／`rules_research.py`，60 個研究程式改讀 `rr.BASE`；②回測截止日放在 `rules_research.BACKTEST_END`，使用者決定先固定 2026-10-30（設 None 才自動 `rs.backtest_end()`）；③資料與引擎仍共用（第 4、5 節）。同產業名額研究是分開前跑的（含 11-02 Yahoo 暫定行，基準 33.35／5,040、5,110），結論不受影響。
 - **同一產業最多佔 2／3／4 個名額（`ind_cap_study.py`）：全部不採用**，三段 33.35→21.4／26.8／30.6、後 3 年情境全部變差（第 6 節）。
 - **待辦（使用者設定）**：13:35 排程權限要使用者在 app 允許一次；Yahoo 成交量約少 2 成，暫定版爆量類訊號可能和正式版不同（以 16:00 為準）。
 - 專案資料夾裡 `BOTTOM_STUDY.md`、`NEXTDAY_STUDY.md`、`bottom*_study.py`、`nextday_study.py`、`fetch_bottom_extra.py`、`data/extra/` 不是本 session 做的、未 commit，沒有動。
@@ -100,7 +100,7 @@ python ledger_report.py [--capital --start --contrib]
 |---|---|
 | `portfolio_study.py` | **核心引擎** `run()`：多股票組合回測，所有規則都是它的參數。`attach_fundamentals()` 加 EPS 轉負、技術賣訊、突破／反轉、接近買點等陣列。模組常數 `MAX_SLOTS, TARGET, MIN_YIELD, FIRST, ADDS, ADD_STEPS, STALE_DAYS, STALE_LOSS` |
 | `rules_live.py` | **正式版設定**（`FINAL`、`FINAL_3`、`FINAL_SW18`、`RULE_TEXT`），只給每日程式讀、只有使用者採用新規則時才改；`daily_run.FINAL` 就是它 |
-| `rules_research.py` | 研究用設定：`BASE`＝`rules_live.FINAL` 的複本（另 `BASE_3`、`BASE_SW18`、`CANDIDATES`）；所有 `*_study.py` 的基準，改了不影響實際建議；通過驗證才複製進 `rules_live.py` |
+| `rules_research.py` | 研究用設定：`BASE`＝`rules_live.FINAL` 的複本（另 `BASE_3`、`BASE_SW18`、`CANDIDATES`）、**`BACKTEST_END` 回測截止日**；所有 `*_study.py` 的基準，改了不影響實際建議；通過驗證才複製進 `rules_live.py` |
 | `param_opt.py` | 參數字典 → 引擎設定的轉接層：`BASE_A`（底）、`to_kw()`、`apply()`（設常數＋算買點陣列）、`market_stats()`／`buy_threshold()`（市場中位數門檻）、`evaluate()`（20 情境＋後 3 年驗證） |
 | `robust_study.py` / `oos_study.py` | 穩健度框架：前 7 年（2017–2023）5 個起始日 × 4 種追加；後 3 年（2024–2026）「延續」與「單獨」 |
 | `daily_run.py` | 每日執行程式，`FINAL` 是正式設定 |
@@ -117,7 +117,7 @@ python ledger_report.py [--capital --start --contrib]
 
 ## 5. 評估方法（為什麼說「排除運氣」）
 
-- **回測資料截止日自動**（2026-11-02 起）：`po.setup()`／`rs.setup()` 載入後截到 `rs.backtest_end()`＝股票池在市股票最後報價日的最小值（13:35 Yahoo 只更新十檔，所以當天下午仍是前一交易日；16:00 FinMind 全池更新後才往前）。每日建議用 `po.setup(live=True)`；check_all 用 `po.setup(end="2026-10-30")` 固定標準答案。技術買點快取 `param_opt_sigs.pkl` 仍以完整日曆建立（`daily_fast` 靠它的長度判斷）。同一個想法不同天跑，基準數字會隨截止日小幅變動，判斷一律看同一次跑出來的配對統計。
+- **回測資料截止日**（2026-11-02 起）：`rules_research.BACKTEST_END`，目前固定 2026-10-30；`po.setup()`／`rs.setup()` 載入後自動截到這天（`rs.truncate()`），研究與 check_all 都用同一個。每日建議用 `po.setup(live=True)`。設 None 時改為自動 `rs.backtest_end()`＝股票池在市股票最後報價日的最小值（13:35 Yahoo 只更新十檔，當天下午仍是前一交易日；16:00 FinMind 全池更新後才往前）。技術買點快取 `param_opt_sigs.pkl` 仍以完整日曆建立（`daily_fast` 靠它的長度判斷）。固定截止日時不同天跑的數字可以直接比；判斷仍以同一次跑出來的配對統計為主。
 - 選參數只看前 7 年；後 3 年只驗證。
 - 每個設定跑 20 種情境（起始日 2017-01／07、2018-01／07、2019-01 × 追加 0／50 萬／100 萬／分段），看 IRR 中位數、最差 10%、標準差。
 - 後 3 年兩種：「延續」（前 7 年的持股帶進來）、「單獨」（2024 起重新 500 萬開始）。

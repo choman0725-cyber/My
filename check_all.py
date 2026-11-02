@@ -15,8 +15,8 @@ from backtest import RESULTS, ROOT
 
 UNI = ROOT / "data" / "universe"
 # 2026-11-01 股票池改成半導體＋電腦及週邊 47 檔（使用者採用，pool_tech_study.py）；電子 90 檔時為 3828／4854／7 檔／25.97／21.69／2.25／24.24／29.66／24.02
-# 回測截止日（2026-11-02 起回測與每日程式分開）：check_all 自己把這個日期傳給 po.setup(end=...)，每天更新資料不會動到這些數字；
-# 研究程式不傳日期，自動用 robust_study.backtest_end()（最近全池更新完的交易日）。要往前推基準：改這個日期、跑 --full、把六個數字抄進來
+# 回測截止日＝rules_research.BACKTEST_END（2026-11-02 起回測與每日程式分開，每天更新資料不會動到這些數字）。
+# 要往前推基準：改 rules_research.BACKTEST_END → 跑 --full → 把六個新數字和日期抄進這裡；日期對不上這裡會 FAIL 提醒
 EXPECT = {"回測截止日": "2026-10-30", "2016-12-28 起期末萬": 5022, "2017-01-03 起期末萬": 5093, "持股檔數": 5,
           "三段平均": 33.31, "最差10最小": 23.36, "標準差平均": 1.70, "前7年": 26.82, "延續": 35.42, "單獨": 37.71}
 fails = []
@@ -99,8 +99,10 @@ def main(full=False):
     print("\n== 3. 正式版數字")
     ok("results/portfolio_prepared.pkl", (RESULTS / "portfolio_prepared.pkl").exists(), "沒有的話照 HANDOFF 第 3 節重建")
     import param_opt as po, robust_study as rs, daily_run as dr, portfolio_study as ps
-    po.setup(end=EXPECT["回測截止日"]); G = rs.G; d = G["dates"]; po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
-    ok("回測日曆截止日", str(d[-1].date()) == EXPECT["回測截止日"], f"{d[-1].date()}；研究程式自動截止日 rs.backtest_end()＝{rs.backtest_end().date()}")
+    import rules_research as rr
+    po.setup(); G = rs.G; d = G["dates"]; po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    ok("回測日曆截止日", str(d[-1].date()) == EXPECT["回測截止日"], f"{d[-1].date()}（rules_research.BACKTEST_END={rr.BACKTEST_END}，EXPECT {EXPECT['回測截止日']}）；"
+       f"全池最新完成日 {rs.backtest_end().date()}")
     ok("引擎股票池", len(G["sub"]) == 47, f"{len(G['sub'])} 檔（2026-11-01 起半導體＋電腦及週邊；之前電子 90 檔）")
     for key, s in (("2016-12-28 起期末萬", 1), ("2017-01-03 起期末萬", d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0])):
         v = round(ps.run(G["sub"], G["member"], d, capital=5e6, start_n=s, **kw)[1].iloc[-1] * 500)

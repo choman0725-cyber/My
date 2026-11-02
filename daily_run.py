@@ -113,7 +113,7 @@ def main():
         FINAL = {**FINAL, **FINAL_3}
         print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")
 
-    po.setup(live=True); G = rs.G                   # 每日程式用最新資料；回測（po.setup()）自動截到 rs.backtest_end()
+    po.setup(live=True); G = rs.G                   # 每日程式用最新資料；回測（po.setup()）截到 rules_research.BACKTEST_END
     if a.asof:
         rs.truncate(a.asof); po._mk.clear()
     po.apply(FINAL); kw = po.to_kw(FINAL)

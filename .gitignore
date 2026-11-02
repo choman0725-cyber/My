@@ -14,3 +14,6 @@ data/market.db.tmp
 my_holdings*.csv
 my_account*.json
 my_reports/
+
+# 13:35 Yahoo 暫定資料記錄（16:00 FinMind 取代後刪除）
+data/provisional.json

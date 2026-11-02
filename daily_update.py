@@ -12,6 +12,12 @@
 
 用法：python daily_update.py [--no-wait] [--skip-advice]
 需要環境變數 FINMIND_TOKEN。建議存在 my_reports/<日期>.md。
+
+兩段式（2026-11-02 使用者：FinMind 收盤後要等一陣子才有當天資料）：
+  13:35 python daily_update.py --source yahoo：用 Yahoo 股市當天日線當暫定資料（daily_yahoo.py），重建後給暫定建議，
+        存 my_reports/<日期>_暫定.md；不需要 FINMIND_TOKEN；暫定列記在 data/provisional.json，不要 commit。
+  16:00 python daily_update.py（FinMind）：等 FinMind 有今天的資料 → 拿掉暫定列 → 照原流程增量更新 →
+        比對 Yahoo vs FinMind（以 FinMind 為準）→ 重建、正式建議存 my_reports/<日期>.md，並標出與暫定版建議是否相同。
 """
 import argparse
 import json
@@ -29,6 +35,7 @@ import update_universe_finmind as uf
 ROOT = uf.ROOT
 LOOKBACK_DAYS, FUND_DAYS = 14, 400
 RETRY_MIN, GIVE_UP = 10, "18:00"
+YAHOO_GIVE_UP = "15:00"
 REPORTS = ROOT / "my_reports"
 ACCOUNT = ROOT / "my_account.json"
 HOLDINGS = ROOT / "my_holdings.csv"
@@ -165,19 +172,86 @@ def advice(account=ACCOUNT, holdings=HOLDINGS):
     return out[out.find("資料最後日期"):] if "資料最後日期" in out else out
 
 
+def account_sections():
+    lines = []
+    for label, acc_f, hold_f in ACCOUNTS:
+        if not acc_f.exists():
+            continue
+        hold_ = ROOT / json.loads(acc_f.read_text(encoding="utf-8")).get("holdings", hold_f.name)
+        lines += [f"## {label}", "", "```", advice(acc_f, hold_f).rstrip(), "```", "",
+                  f"成交後請更新 {hold_.name}（代號,進場日,股數,成本,首買價…）與 {acc_f.name} 的 cash。", ""]
+    return lines
+
+
+def actions(text):
+    """報告裡每個帳戶的「明天開盤要做的事」段落（比對暫定版與正式版用）。"""
+    out = {}
+    for part in text.split("\n## ")[1:]:
+        a_ = part.find("【明天")
+        out[part.splitlines()[0]] = part[a_:part.find("【觀察", a_)].strip() if a_ >= 0 else ""
+    return out
+
+
+def main_yahoo(a, today):
+    import daily_yahoo as dy
+    t0 = datetime.now()
+    while True:
+        info = dy.apply(today, universe())
+        if info is not None or a.no_wait or datetime.now().strftime("%H:%M") >= YAHOO_GIVE_UP:
+            break
+        print(f"{datetime.now():%H:%M} Yahoo 還沒有今天的收盤，5 分鐘後重試", flush=True)
+        time.sleep(300)
+    REPORTS.mkdir(exist_ok=True)
+    rep = REPORTS / f"{today}_暫定.md"
+    if info is None:
+        msg = f"# {today} 沒有新的交易日資料（Yahoo）\n\n加權指數沒有今天的收盤（休市，或 Yahoo 到 {YAHOO_GIVE_UP} 仍未更新）。\n"
+        rep.write_text(msg, encoding="utf-8"); print(msg)
+        return 0
+    rebuild()
+    lines = [f"# {today} 暫定建議（Yahoo 股市收盤資料；16:00 以 FinMind 驗證後的正式版為準）", "",
+             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；耗時 {(datetime.now() - t0).seconds // 60} 分鐘",
+             f"- Yahoo 沒有今天資料：{', '.join(info['miss']) or '無'}",
+             f"- 原本就沒到前一個交易日（不補、等 FinMind）：{', '.join(info['skip']) or '無'}",
+             "- 今天若有除權息／減資，暫定資料還沒調整，以 16:00 正式版為準", ""]
+    if not a.skip_advice:
+        lines += account_sections()
+    rep.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+    print(f"\n已存：{rep}")
+    return 0
+
+
+def finmind_ready(fm, today):
+    """FinMind 的 TAIEX 有沒有比「非暫定」資料更新的日子。"""
+    import daily_yahoo as dy
+    last = pd.read_csv(ROOT / "data" / "TAIEX.csv")["date"].iloc[-1]
+    if dy.PROV.exists():
+        last = json.loads(dy.PROV.read_text(encoding="utf-8"))["prev"]
+    start = (pd.Timestamp(today) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    t = uf.finmind_price_frame(fm.get("TaiwanStockPrice", "TAIEX", start, today))
+    return not t.empty and t["date"].max().strftime("%Y-%m-%d") > last
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-wait", action="store_true", help="今天資料還沒出來就直接結束，不重試")
     ap.add_argument("--skip-advice", action="store_true")
+    ap.add_argument("--source", choices=["finmind", "yahoo"], default="finmind", help="yahoo＝13:35 暫定資料（見檔頭說明）")
     a = ap.parse_args()
+    today = date.today().isoformat()
+    if a.source == "yahoo":
+        return main_yahoo(a, today)
+    import daily_yahoo as dy
     token = os.environ.get("FINMIND_TOKEN")
     if not token:
         raise SystemExit("沒有 FINMIND_TOKEN")
-    today = date.today().isoformat()
     t0 = datetime.now()
+    info, prov = None, None
     while True:
         fm = uf.FinMind(token, refresh=True)        # 重試時不能讀到「資料還沒出來」那次的快取
-        info = update(fm, today)
+        if finmind_ready(fm, today):
+            prov = dy.strip()                       # FinMind 有了才拿掉 Yahoo 暫定列（以 FinMind 為準）
+            info = update(fm, today)
         if info is not None or a.no_wait or datetime.now().strftime("%H:%M") >= GIVE_UP:
             break
         print(f"{datetime.now():%H:%M} FinMind 還沒有今天的資料，{RETRY_MIN} 分鐘後重試", flush=True)
@@ -185,7 +259,8 @@ def main():
     REPORTS.mkdir(exist_ok=True)
     rep = REPORTS / f"{today}.md"
     if info is None:
-        msg = f"# {today} 沒有新的交易日資料\n\nTAIEX 沒有比現有資料更新的日子（休市，或 FinMind 到 {GIVE_UP} 仍未更新）。建議沿用前一份。\n"
+        msg = f"# {today} 沒有新的交易日資料\n\nTAIEX 沒有比現有資料更新的日子（休市，或 FinMind 到 {GIVE_UP} 仍未更新）。建議沿用前一份" + \
+              ("；Yahoo 暫定資料仍留在 data/provisional.json，暫定建議見當天 _暫定.md" if dy.PROV.exists() else "") + "。\n"
         rep.write_text(msg, encoding="utf-8"); print(msg)
         return 0
     rebuild()
@@ -195,13 +270,17 @@ def main():
              f"- 除權息／減資／分割而整段重抓：{', '.join(info['events']) or '無'}",
              f"- 新進池：{', '.join(info['report']) or '無'}",
              f"- 沒有到最新一天：{', '.join(info['lag']) or '無'}", ""]
+    if prov:
+        bad, vol, none = dy.verify(prov)
+        lines += [f"- Yahoo 暫定資料驗證（{prov['date']}，{len(prov['sids'])} 檔，以 FinMind 為準）：價格不一致 {len(bad)} 檔"
+                  + (f"：{'；'.join(bad)}" if bad else "") + f"；成交量差 >1% {vol} 檔；FinMind 沒有這天：{', '.join(none) or '無'}", ""]
+        dy.PROV.unlink()
     if not a.skip_advice:
-        for label, acc_f, hold_f in ACCOUNTS:
-            if not acc_f.exists():
-                continue
-            hold_ = ROOT / json.loads(acc_f.read_text(encoding="utf-8")).get("holdings", hold_f.name)
-            lines += [f"## {label}", "", "```", advice(acc_f, hold_f).rstrip(), "```", "",
-                      f"成交後請更新 {hold_.name}（代號,進場日,股數,成本,首買價…）與 {acc_f.name} 的 cash。", ""]
+        lines += account_sections()
+        pre = REPORTS / f"{today}_暫定.md"
+        if prov and pre.exists():
+            old, new = actions(pre.read_text(encoding="utf-8")), actions("\n".join(lines))
+            lines += ["## 與 13:35 暫定建議比較", ""] + [f"- {k}：{'相同' if old.get(k) == v else '**不同，以這份為準**'}" for k, v in new.items()] + [""]
     rep.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\n已存：{rep}")

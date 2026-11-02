@@ -5,7 +5,11 @@
   P2 四檔 ETF 歷年全部成分股（任一名單內就可買）
 每個池子 × {正式版, 換股 18%（daily_run.FINAL_SW18）}：20 情境＋後 3 年（配對相對 P0 正式版）、500 萬兩個起跑日、2007–2016 每年 1 月起跑。
 資料：results/portfolio_prepared_2006_all.pkl（2006 起、自己中位數真歷史，所以 P0 正式版與 2017 快取的 33.31 略不同）。
-用法：python pool_switch_study.py　輸出：results/pool_switch_eval.csv、_money.csv、_hist.csv"""
+用法：python pool_switch_study.py　輸出：results/pool_switch_eval.csv、_money.csv、_hist.csv
+     python pool_switch_study.py abs：換股改成「持股剩餘肉 ≤5% 且新股預期肉 ≥10%」，非電子股（傳產／金融／航運）的肉用自己 3 年平均殖利率算
+       （其餘同換股 18%：持股賺 ≥18%、非成長股、新股信心 ≥3）　輸出：results/pool_switch_abs_*.csv"""
+import sys
+
 import numpy as np
 import pandas as pd
 
@@ -19,6 +23,20 @@ from pool_expand_study import load, setup_pool
 from stock_fit import paired_from_files
 
 RULES = {"正式版": dr.FINAL, "換股18%": {**dr.FINAL, **dr.FINAL_SW18}}
+OUT = "pool_switch"
+if "abs" in sys.argv:     # 2026-11-02 使用者：剩餘肉 ≤5% 且新股預期肉 ≥10% 就換；傳產／金融／航運（非電子）的肉用自己 3 年平均殖利率算，電子股用 5%
+    RULES = {"正式版": dr.FINAL,
+             "換股 剩≤5%·新≥10%": {**dr.FINAL, "switch": {**dr.FINAL_SW18["switch"], "abs": (0.05, 0.10), "hy_key": "hy_sw"}}}
+    OUT = "pool_switch_abs"
+
+
+def own_mean_yield(G, d):
+    """非電子股：每天自己過去 750 日平均殖利率（前一日為止），當作它的滿足殖利率；電子股不設（引擎用 5%）。"""
+    import rules_ext
+    ind = pd.read_csv(ps.UNI / "industry_twse_all.csv", dtype=str).set_index("stock_id")["industry"]
+    for sid, x in G["sub"].items():
+        if ind.get(sid) == "非電子":
+            x["hy_sw"] = rules_ext.own_median(x["yield"][:len(d)], d, 750, stat="mean")[1]
 
 
 def pools(cons):
@@ -37,11 +55,11 @@ def main():
     for pname, cdf in pools(cons).items():
         for rname, cfg in RULES.items():
             name = f"{pname}｜{rname}"
-            G = setup_pool(cdf, d, data, sig); po.apply(cfg); kw = po.to_kw(cfg)
+            G = setup_pool(cdf, d, data, sig); own_mean_yield(G, d); po.apply(cfg); kw = po.to_kw(cfg)
             po.CONFIGS[name] = cfg
-            m = po.evaluate([name], f"psw_{i}").loc[name]
+            m = po.evaluate([name], f"{OUT}_{i}").loc[name]
             if i:
-                for k_, v in paired_from_files("psw_0", f"psw_{i}").items():
+                for k_, v in paired_from_files(f"{OUT}_0", f"{OUT}_{i}").items():
                     m[k_] = v
             m["檔數"] = len(G["sub"]); res[name] = m
             po.apply(cfg)
@@ -67,10 +85,10 @@ def main():
         g = g.set_index("起跑"); d16 = (g["至2016年底IRR"] - base["至2016年底IRR"]).dropna(); dn = g["至今IRR"] - base["至今IRR"]
         summ[name] = dict(至2016平均IRR=round(g["至2016年底IRR"].mean(), 1), 至2016最差=g["至2016年底IRR"].min(), 至2016配對=f"{(d16 > .05).sum()}/{(d16.abs() <= .05).sum()}/{(d16 < -.05).sum()}",
                           至今平均IRR=round(g["至今IRR"].mean(), 1), 至今配對=f"{(dn > .05).sum()}/{(dn.abs() <= .05).sum()}/{(dn < -.05).sum()}")
-    out[show].to_csv(RESULTS / "pool_switch_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / "pool_switch_money.csv", encoding="utf-8-sig")
-    t.to_csv(RESULTS / "pool_switch_hist.csv", index=False, encoding="utf-8-sig")
-    pd.DataFrame(summ).T.to_csv(RESULTS / "pool_switch_hist_summary.csv", encoding="utf-8-sig")
-    for f in RESULTS.glob("param_opt_psw_*"):
+    out[show].to_csv(RESULTS / f"{OUT}_eval.csv", encoding="utf-8-sig"); mon.to_csv(RESULTS / f"{OUT}_money.csv", encoding="utf-8-sig")
+    t.to_csv(RESULTS / f"{OUT}_hist.csv", index=False, encoding="utf-8-sig")
+    pd.DataFrame(summ).T.to_csv(RESULTS / f"{OUT}_hist_summary.csv", encoding="utf-8-sig")
+    for f in RESULTS.glob(f"param_opt_{OUT}_*"):
         f.unlink()
     with pd.option_context("display.width", 340, "display.unicode.east_asian_width", True):
         print(out[show].to_string()); print(mon.to_string()); print(pd.DataFrame(summ).T.to_string())

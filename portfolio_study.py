@@ -279,6 +279,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
       （剩餘肉最少的持股對預期最多的新股，逐對比較）。
       選項：hy＝固定殖利率（例如 5）取代續抱門檻；floor=False＝不設停利下限、數字＝自訂滿足點下限（純用殖利率算肉，持股已低於 hy 時剩餘為負）；
       min_frac＝只換進首買比例 ≥ 此值的新股（信心高）；no_growth=True＝當天是成長股（growth_flag）的持股不換出、新股不換進；換股空出的名額優先給換進的那檔。
+      abs=(a, b)＝改用絕對門檻：持股剩餘 ≤ a 且新股預期 ≥ b 就換；hy_key＝data[sid] 裡每檔每日的滿足殖利率陣列（沒有就用 hy）。
       money=True＝用金額比：新股預期獲利（當天額度 × 首買比例〔信心〕× 預期%）− 持股剩餘獲利（賣出金額 × 剩餘%）≥ margin × 賣出金額。
 one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日才能再新買；
     target_util 搭配 util_mode：
@@ -891,7 +892,11 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
         switch_to = set()                               # 換股空出的名額保留給換進的那檔（買進時排最前面）
         if switch and free <= 0 and not resting:
             fix_ = switch.get("hy")                     # 固定殖利率（例如 5）；None＝用該股當天的續抱門檻
-            hy_ = lambda s_: fix_ if fix_ else (data[s_]["hy_rel"][p] if "hy_rel" in data[s_] else 4.75)
+            hk_ = switch.get("hy_key")                     # 每檔自己的滿足殖利率陣列（例如傳產用自己的平均殖利率）；沒有或 NaN 就用 hy
+            def hy_(s_):
+                if hk_ and hk_ in data[s_] and not np.isnan(data[s_][hk_][p]) and data[s_][hk_][p] > 0:
+                    return data[s_][hk_][p]
+                return fix_ if fix_ else (data[s_]["hy_rel"][p] if "hy_rel" in data[s_] else 4.75)
             fl_ = switch.get("floor", True)                # True＝停利門檻當下限；數字＝自訂滿足點（例如 0.15）；False＝不設
             fl_ = TARGET if fl_ is True else (-np.inf if fl_ is False else fl_)
             exp_ = lambda s_: max(fl_, data[s_]["yield"][p] / hy_(s_) - 1)
@@ -916,6 +921,9 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                     new_amt = min(cash + old_val, value_prev / MAX_SLOTS * fr_)
                     ok_ = new_amt * e_new - old_val * r_old >= switch.get("margin", 0.10) * old_val
                     note_ = f"持股 {old_val:.3f}×剩餘 {r_old:.0%} vs 新股 {new_amt:.3f}×預期 {e_new:.0%}"
+                elif switch.get("abs"):
+                    ok_ = r_old <= switch["abs"][0] and e_new >= switch["abs"][1]   # 持股剩餘 ≤ 門檻、新股預期 ≥ 門檻
+                    note_ = f"剩餘 {r_old:.0%} ≤ {switch['abs'][0]:.0%}、新股預期 {e_new:.0%} ≥ {switch['abs'][1]:.0%}"
                 else:
                     ok_ = e_new - r_old >= switch.get("margin", 0.10)
                     note_ = f"剩餘 {r_old:.0%} vs 新股預期 {e_new:.0%}"

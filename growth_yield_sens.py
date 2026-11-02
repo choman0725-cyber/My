@@ -4,7 +4,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -31,10 +31,10 @@ def ratios(G, dates, window):
 
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     s_n = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
-    sig = G["sig"][po.ENTRIES[dr.FINAL["entry"]]]
-    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"]) for sid, d in G["sub"].items()}
+    sig = G["sig"][po.ENTRIES[rr.BASE["entry"]]]
+    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, rr.BASE["profit_years"]) for sid, d in G["sub"].items()}
     orig = {sid: d["buy"].copy() for sid, d in G["sub"].items()}
     key = po._applied["buy"]
     _to_kw = po.to_kw
@@ -46,13 +46,13 @@ def main():
         for sid, d in G["sub"].items():
             ratio, med = R[sid]
             if k is None:
-                d["buy"] = orig[sid]; d["hy_rel"] = np.full(len(dates), dr.FINAL["hold_yield"])
+                d["buy"] = orig[sid]; d["hy_rel"] = np.full(len(dates), rr.BASE["hold_yield"])
             else:
                 growth = np.nan_to_num(med, nan=99) < gmed
                 rel = sig[sid] & (np.nan_to_num(ratio, nan=0) >= k) & prof[sid]
-                d["buy"] = np.where(growth, rel, orig[sid]); d["hy_rel"] = np.where(growth, med, dr.FINAL["hold_yield"])
+                d["buy"] = np.where(growth, rel, orig[sid]); d["hy_rel"] = np.where(growth, med, rr.BASE["hold_yield"])
         po._applied["buy"] = key
-        po.CONFIGS[name] = dr.FINAL
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], tag).loc[name]
         if tag != "gys_A":
             for k_, v in paired_from_files("gys_A", tag).items():

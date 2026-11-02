@@ -21,7 +21,7 @@ hi、lo 掃一個小網格，每個版本跑 20 情境＋後 3 年＋與 A 的�
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -148,9 +148,9 @@ def main(version="v1"):
     po.setup()
     G = rs.G
     dates = G["dates"]
-    po.apply(dr.FINAL)
-    kw = po.to_kw(dr.FINAL)
-    thr = po.buy_threshold(dr.FINAL)
+    po.apply(rr.BASE)
+    kw = po.to_kw(rr.BASE)
+    thr = po.buy_threshold(rr.BASE)
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
     F = factors_v2(G, dates, thr) if version in ("v2", "v3", "v3b") else factors(G, dates, thr)
     if version in ("v3", "v3b"):
@@ -204,7 +204,7 @@ def main(version="v1"):
             d["first_frac"] = frac_of(sc)
             d["buy"] = orig[sid] & mask_of(sc)
         po._applied["buy"] = key
-        po.CONFIGS[name] = dr.FINAL
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], tag).loc[name]
         if not tag.endswith("_A"):
             for k_, v in paired_from_files(f"conf{sfx}_A", tag).items():

@@ -10,7 +10,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import miss_study as ms
 import param_opt as po
 import portfolio_study as ps
@@ -73,7 +73,7 @@ def main():
                 d["miss"] = fl.get(sid, np.zeros(len(dates), bool))
         po._mk[("all", len(dates))] = mk
         po._applied.clear()
-        cfg = {**dr.FINAL, "haircut": bool(spec["cut"])}
+        cfg = {**rr.BASE, "haircut": bool(spec["cut"])}
         if spec.get("miss"):
             cfg.update(miss_exit=spec["miss"][2], miss_key="miss")
         po.CONFIGS[name] = cfg

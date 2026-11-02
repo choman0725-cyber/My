@@ -18,7 +18,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -35,7 +35,7 @@ S = {}
 
 
 def setup():
-    po.setup(); po.apply(dr.FINAL)
+    po.setup(); po.apply(rr.BASE)
     dates = G["dates"]
     data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype=str)

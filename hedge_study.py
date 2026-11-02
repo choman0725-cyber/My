@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -56,7 +56,7 @@ def vehicles(dates):
 
 def main(quick=False):
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     V = vehicles(d)
     base_h = dict(hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_add_timing="signal", hedge_add_cap="shortfall")
     variants = {"正式版 E＋D": {}}
@@ -119,7 +119,7 @@ def main(quick=False):
     try:
         for i, (name, extra) in enumerate(variants.items()):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"hg_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files("hg_0", f"hg_{i}").items():

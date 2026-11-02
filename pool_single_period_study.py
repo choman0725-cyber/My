@@ -8,7 +8,7 @@
 用法：python pool_single_period_study.py　輸出：results/pool_single_period.csv、results/pool_single_period_trades.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -72,7 +72,7 @@ def main():
         mem = mem_50[sid] if grp == "47檔" else mem_all[sid]
         G["sub"] = {sid: full_sub[sid]}; G["member"] = {sid: mem}
         G["sig"] = {e: {sid: m[sid]} for e, m in full_sig.items() if sid in m}
-        po._applied["buy"] = None; po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+        po._applied["buy"] = None; po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
         row = dict(代號=sid, 名稱=ind.loc[sid, "name"], 產業=ind.loc[sid, "industry"].replace("設備業", "").replace("業", ""), 來源=grp)
         for pk, (s, e) in win.items():
             row[f"{pk}成分天"] = int(mem.iloc[s:e + 1].sum())

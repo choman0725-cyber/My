@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -28,10 +28,10 @@ def main(elec=False):
     sub = d[s + 1:]; months = pd.Series(sub, index=sub).groupby([sub.year, sub.month]).first(); midx = [d.get_loc(t) for t in months.values]
     contrib = {i: 100_000 / 5_000_000 for i in midx}
     for i, name in enumerate(names):
-        G = setup_pool(P[name], dates, data, sig); kw = po.to_kw(dr.FINAL)
+        G = setup_pool(P[name], dates, data, sig); kw = po.to_kw(rr.BASE)
         tr, eq = ps.run(G["sub"], G["member"], d, capital=5_000_000, contributions=contrib, start_n=s, **kw)
         yt[name] = yearly(eq)
-        po.CONFIGS[name] = dr.FINAL
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], f"{tag}_{i}").loc[name]
         if i:
             for k_, v in paired_from_files(f"{tag}_0", f"{tag}_{i}").items():

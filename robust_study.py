@@ -18,10 +18,21 @@ from portfolio_electronics import CAPITAL, ELECTRONICS, POOL as _POOL
 
 POOL = _POOL   # 正式版股票池（47 檔）；要重現 2026-11-01 以前的研究（電子 90 檔）先設 POOL = ELECTRONICS 再 setup()
 
-# 回測截止日（2026-11-02 使用者：「把實際跑買股建議的程式跟回測程式分開來」）：
-# 所有研究／驗證（param_opt.evaluate、check_all、*_study.py）只用到這一天為止的資料，每天更新資料不會動到回測數字；
-# 每日程式（daily_run、daily_update、stock_fit、ledger_report）用 setup(live=True) 讀全部資料。要把回測基準往前推，改這裡並重算 check_all 的 EXPECT。
-BACKTEST_END = pd.Timestamp("2026-10-30")
+
+
+def backtest_end():
+    """回測資料截止日（2026-11-02 使用者：回測跟到最新、但自動）：股票池裡仍在市（最後報價距 TAIEX 最後日 10 天內）
+    的股票，最後報價日的最小值＝「最近一個全池都更新完的交易日」。13:35 Yahoo 暫定只更新十檔，所以當天下午仍是前一個交易日；
+    16:00 FinMind 全池更新後才會往前一天。check_all 不用這個，自己指定固定日期（setup(end=...)）當標準答案。"""
+    tai = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"].max()
+    last = {}
+    for sid in POOL:
+        p = ps.UNI / "prices" / f"{sid}.csv"
+        if p.exists():
+            last[sid] = pd.Timestamp(pd.read_csv(p, usecols=["date"])["date"].iloc[-1])
+    alive = [d for d in last.values() if d >= tai - pd.Timedelta(days=10)]
+    return min(alive) if alive else tai
+
 IS_END = pd.Timestamp("2023-12-31")
 STARTS = ["2017-01-03", "2017-07-03", "2018-01-02", "2018-07-02", "2019-01-02"]
 CONTRIBS = {
@@ -49,8 +60,9 @@ SPLITS = {"不分區": None, "0050區2＋0056區3": (2, 3), "0050區3＋0056區2
 G = {}
 
 
-def setup(live=False):
-    """live=False（研究、驗證）：資料截到 BACKTEST_END；live=True（每日程式）：用到最新一天。"""
+def setup(live=False, end=None):
+    """live=True（每日程式）：用到最新一天。live=False（研究、驗證）：資料截到 end；end=None 用 backtest_end()（自動），
+    check_all 傳固定日期。"""
     cons = pd.read_csv(ps.UNI / "constituents.csv", dtype={"stock_id": str, "etf": str})
     cal = pd.read_csv(ROOT / "data" / "TAIEX.csv", parse_dates=["date"])["date"]
     dates = pd.DatetimeIndex(cal[cal >= ps.START - pd.Timedelta(days=5)]).sort_values()
@@ -62,7 +74,7 @@ def setup(live=False):
     G.update(dates=dates, zone=zone, member=member, sub={k: v for k, v in data.items() if k in member},
              etf={e: ps.load_prices(e)[0]["close"].reindex(dates).ffill() for e in ("0050", "0056")})
     if not live:
-        truncate(BACKTEST_END)
+        truncate(end or backtest_end())
 
 
 def truncate(cut):

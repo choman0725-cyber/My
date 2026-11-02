@@ -1,6 +1,6 @@
 """休息時只賣有賺的、賠錢的留著照常加碼、休息期內不新買；與「全部出清」及正式版對照。"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 import rest_study
 from backtest import RESULTS, ROOT
 from portfolio_contrib import irr
@@ -23,7 +23,7 @@ def main():
     C["每 3 年只賣有賺"] = {"settle": (36, "profit")}
     names = []
     for n, x in C.items():
-        po.CONFIGS[n] = {**dr.FINAL, **x}; names.append(n)
+        po.CONFIGS[n] = {**rr.BASE, **x}; names.append(n)
     m = po.evaluate(names, "restprofit")
     pd.set_option("display.width", 320); pd.set_option("display.unicode.east_asian_width", True)
     print("【穩健度】"); print(m.loc[names][po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())

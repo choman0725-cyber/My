@@ -16,7 +16,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -119,7 +119,7 @@ def main(which="base"):
         Yall = pd.DataFrame({s: np.where(mem_all[s].values, Y[s], np.nan) for s in Y if s in mem_all}, index=dates)
         po._mk[("all", len(dates))] = (Yall.median(axis=1).values, Yall.std(axis=1).values, Yall.notna().sum(axis=1).values)
         po._applied.clear()
-        po.CONFIGS[name] = {**dr.FINAL}
+        po.CONFIGS[name] = {**rr.BASE}
         po.apply(po.CONFIGS[name])
         m = po.evaluate([name], f"yieldvar_{which}")
         rows[name] = m.loc[name]

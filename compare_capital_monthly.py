@@ -5,7 +5,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import long_history as lh
 import oos_study as oos
 import param_opt as po
@@ -32,7 +32,7 @@ def etf_path(px, d, s, cap, monthly, midx):
 def main():
     G = lh.setup(); d = G["dates"]
     px = pd.read_csv(ps.UNI / "prices" / "0050.csv", parse_dates=["date"]).set_index("date")["adj_close"].reindex(d).ffill()
-    cfg_new = dr.FINAL; cfg_old = {k: v for k, v in dr.FINAL.items() if k != "topup"}
+    cfg_new = rr.BASE; cfg_old = {k: v for k, v in rr.BASE.items() if k != "topup"}
     rows = []
     for hname, hstart in HORIZONS.items():
         s = d.get_indexer([pd.Timestamp(hstart)], method="bfill")[0]

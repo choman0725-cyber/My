@@ -2,7 +2,7 @@
 輸出 results/std_tune_confirm_eval.csv、std_tune_confirm_money.csv、start_dispersion_cap5.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -12,7 +12,7 @@ from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
-U1 = dr.FINAL["topup"]
+U1 = rr.BASE["topup"]
 V = {"U1 正式版": U1, "U1·單次上限 5% 總資產": {**U1, "max_amt": 0.05}, "U1·每檔只補一次": {**U1, "max_per_pos": 1},
      "U1·單次上限 5%＋每檔一次": {**U1, "max_amt": 0.05, "max_per_pos": 1}}
 
@@ -23,7 +23,7 @@ def main():
     sub = d[s17 + 1:]; months = pd.Series(sub, index=sub).groupby([sub.year, sub.month]).first(); midx = [d.get_loc(t) for t in months.values]
     rows, res = [], {}
     for i, (name, tu) in enumerate(V.items()):
-        cfg = {**dr.FINAL, "topup": tu}; po.apply(cfg); kw = po.to_kw(cfg)
+        cfg = {**rr.BASE, "topup": tu}; po.apply(cfg); kw = po.to_kw(cfg)
         for sname, s in (("2017-01-03", s17), ("2016-12-28", 1)):
             for monthly in (0, 100_000):
                 idx = [i_ for i_ in midx if i_ > s] if monthly else []
@@ -44,11 +44,11 @@ def main():
     show = [c for c in ["前7年", "前7年最差10", "前7年標準差", "延續", "延續標準差", "單獨", "單獨標準差", "三段平均", "最差10最小", "標準差平均", "前7年配對", "後3年配對"] if c in out.columns]
     out[show].round(2).to_csv(RESULTS / "std_tune_confirm_eval.csv", encoding="utf-8-sig")
     # 37 個起跑日：U1 vs 上限 5%
-    cfg_c = {**dr.FINAL, "topup": V["U1·單次上限 5% 總資產"]}
+    cfg_c = {**rr.BASE, "topup": V["U1·單次上限 5% 總資產"]}
     starts = [i_ for i_ in range(1, len(d)) if pd.Timestamp("2016-12-28") <= d[i_] <= pd.Timestamp("2017-02-28")]
     disp = []
     for s in starts:
-        po.apply(dr.FINAL); e0 = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=s, **po.to_kw(dr.FINAL))[1]
+        po.apply(rr.BASE); e0 = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=s, **po.to_kw(rr.BASE))[1]
         po.apply(cfg_c); e1 = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=s, **po.to_kw(cfg_c))[1]
         disp.append(dict(起跑=d[s].date(), U1萬=round(e0.iloc[-1] * 500), 上限5萬=round(e1.iloc[-1] * 500)))
     D = pd.DataFrame(disp); D["差%"] = ((D["上限5萬"] / D["U1萬"] - 1) * 100).round(1); D.to_csv(RESULTS / "start_dispersion_cap5.csv", index=False, encoding="utf-8-sig")

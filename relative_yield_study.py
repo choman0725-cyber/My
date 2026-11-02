@@ -2,7 +2,7 @@
 中位數／標準差用滾動視窗、只用當天以前的資料（無前視）。對照正式版（固定 5% / 4.75%）。
 用法：python relative_yield_study.py"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
@@ -57,7 +57,7 @@ def main():
         C[f"{wn}中位數買(至少5%)／中位數−0.08σ續抱"] = {"rel": (w, 0.0, 0.08, 5.0)}
     names = []
     for n, x in C.items():
-        po.CONFIGS[n] = {**dr.FINAL, "hold_yield": 4.75, **x}; names.append(n)
+        po.CONFIGS[n] = {**rr.BASE, "hold_yield": 4.75, **x}; names.append(n)
     m = po.evaluate(names, "relyield")
     pd.set_option("display.width", 320); pd.set_option("display.unicode.east_asian_width", True)
     print("【穩健度】"); print(m.loc[names][po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())

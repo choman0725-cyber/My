@@ -1,7 +1,7 @@
 """全成分股中位數 ± k×σ 的細網格：買進 k_b ∈ [-0.10, 0.40]、續抱 k_h ∈ [0, 0.50]，步長 0.05（121 組）。
 挑選條件：穩定度不能比正式版差（標準差平均 <= 正式版、三段最差 10% >= 正式版），再看三段平均最高。"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 import market_median_study as mm
 from backtest import RESULTS
 from portfolio_contrib import irr
@@ -13,11 +13,11 @@ HOLD_K = [round(x, 2) for x in np.arange(0.0, 0.501, 0.05)]
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
     po.apply, po.to_kw = mm.apply2, mm.to_kw2
-    names = ["正式版（固定 5% / 4.75%）"]; po.CONFIGS[names[0]] = {**dr.FINAL}
+    names = ["正式版（固定 5% / 4.75%）"]; po.CONFIGS[names[0]] = {**rr.BASE}
     for bk in BUY_K:
         for hk in HOLD_K:
             n = f"買 中位數{bk:+.2f}σ／續抱 中位數-{hk:.2f}σ"
-            po.CONFIGS[n] = {**dr.FINAL, "mkt": ("all", bk, hk, None)}; names.append(n)
+            po.CONFIGS[n] = {**rr.BASE, "mkt": ("all", bk, hk, None)}; names.append(n)
     print(f"{len(names)} 組", flush=True)
     m = po.evaluate(names, "sigmagrid")
     base = m.loc[names[0]]

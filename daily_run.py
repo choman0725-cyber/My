@@ -9,6 +9,7 @@
   python daily_run.py --asof 2026-06-30                  # 假裝今天是 2026-06-30（回看當時的建議）
   python daily_run.py --capital 13780000 --start 2026-10-16 --monthly 100000 --monthly-from 2026-12   # 每月第一個交易日追加 10 萬
   python daily_run.py --holdings my_holdings.csv --cash 11575363   # 從實際持股起算（只算明天要做的事；檔案格式見 load_holdings）
+正式版設定在 rules_live.py（本檔的 FINAL 就是它）；研究用 rules_research.py，兩邊分開（2026-11-02）。
 資料更新：data/universe/prices/*.csv、eps_all.csv、dividend_all.csv 更新後先重跑
   python portfolio_electronics.py 以重建 results/portfolio_prepared.pkl，再執行本程式。
 """
@@ -23,42 +24,7 @@ import portfolio_study as ps
 import robust_study as rs
 from backtest import ROOT, SELL_COST
 
-FINAL = {**po.BASE_A, "hold_yield": 4.75, "target": 0.12, "mkt": ("all", 0.0, None, 5.0), "profit_years": 5,
-         "growth_rel": (1.25, 4.0, 750), "conf_first": (3, 0.8),
-         "topup": {"signal": True, "profit_only": True, "cash_min_first": True, "health_min": 0.8}}
-# topup（2026-11-01 使用者採用 U1）：持股「前一日收盤 ≥ 平均成本、當天再次符合完整買進條件、未套牢（虧 <30%）、仍在成分股」時，
-# 補到「當天可投資資產 ÷ 5 × 首買比例」（可投資資產＝現金＋未套牢持股市值），且補完後現金仍 ≥ 一筆首買金額；
-# 健康度（可投資資產 ÷ 總資產）< 0.8 時不補。虧損中的部位照舊走跌深／定期加碼（進場額度）。
-# 加碼維持「進場額度（進場當時總資產 ÷ 5）」的 30%/20%、定期 20%；市值基準 40%/25% 測過等價（results/add_marketvalue_*），
-# 但每日程式會直接印出金額，使用者 2026-10-31 決定維持額度基準
-# growth_rel=(k, gmed, window)：過去 750 日殖利率中位數 < 4% 的股票（成長股）改用「殖利率 ≥ 自己中位×1.25」買、「≥ 自己中位」續抱
-# conf_first=(hi, frac)：信心 ≥ 3 的買點首買額度 80%，其餘 50%（信心定義見 rules_ext.py）
-# 3 檔版（--slots3，2026-11-01 給只能買 3 檔的人用，使用者自己的帳戶維持 5 檔）：同時最多 3 檔（套牢、被剔除也佔名額）、
-# 每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 仍 80%），其他照正式版（slot3_study.py：首買 60～70% 最好，其餘參數改了都變差）
-FINAL_3 = {"max_slots": 3, "hard_cap": True, "first": 0.65}
-# 備案 換股 18%（--switch18，2026-11-02 使用者載入備案，不是正式版）：名額滿時，持股賺 ≥18%、不是成長股，
-# 剩餘肉（殖利率 ÷ 5% − 1）比信心 ≥3 的新買點預期肉（殖利率 ÷ 5% − 1）少 10 個百分點以上 → 隔天開盤賣掉持股、換進新股（switch_study.py v7）
-FINAL_SW18 = {"switch": {"min_gain": 0.18, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}}
-# mkt=(範圍, k, 續抱k, 下限)：買進門檻＝max(當天全部 0050＋0056 成分股預估殖利率中位數 ＋ k×σ, 下限)；續抱 k=None 表示續抱維持固定 hold_yield
-# profit_years=5：買進時最近 5 個已知完整會計年度（Q4 於隔年 3/31 後視為已知）年度 EPS 全部 > 0；上市不滿 5 年以已知年度計
-RULE_TEXT = """正式規則（單一帳戶，最多 5 檔，只做多，買賣都隔天開盤）
-  選股：當天屬於 0050 或 0056 成分股的半導體、電腦及週邊設備股（證交所產業別，47 檔；光電、零組件、通信等不買）
-  買進：預估殖利率 >= max(當天全部 0050＋0056 成分股預估殖利率的中位數, 5%)
-        （預估股利＝近四季 EPS × 近 3 年平均配息率；年配且已公告未除息用公告值）
-        且公司最近 5 個已知完整年度每年 EPS 都 > 0（不足 5 年以已知年度計）
-        成長股（過去 3 年殖利率中位數 < 4%）改為：預估殖利率 >= 自己 3 年中位數 × 1.25
-        且技術買點任一：多指標超賣共振／爆量長下影線或爆量長紅／布林下軌＋KD 低檔金叉／低檔區＋價量
-        同日多檔依殖利率高到低挑；每檔額度＝當時總資產 ÷ 5，首買額度 50%；信心 >= 3 的買點首買 80%
-        （信心＝相對殖利率 0～2 ＋ 大盤 0～3 ＋ 近 20 日急漲急跌 1 ＋ 距 60 日高點 −15～−40% 1）
-  加碼：收盤曾跌到首買價 -15% / -30% 後，出現爆量下影線或長紅且收盤仍低於首買價，加碼額度 30% / 20%
-        持有每滿半年仍虧損、出現同樣訊號且收盤低於平均成本，再加碼額度 20%
-  補足（2026-11-01 起）：持股已賺錢（收盤 >= 平均成本）、當天再次符合完整買進條件、虧損未達 30%、仍在成分股時，
-        補到「當天可投資資產 ÷ 5 × 首買比例」（可投資資產＝現金＋虧損未達 30% 的持股市值）；補完後現金須仍 >= 一筆首買金額
-        可投資資產 ÷ 總資產 < 80% 時不補；虧損中的部位不適用，照舊走加碼規則
-  賣出：收盤較平均成本獲利 >= 12% 且預估殖利率 < 4.75%（成長股：< 自己 3 年中位數；算不出殖利率視同跌破）
-        近四季 EPS 合計轉負：隔天賣；被移出成分股後：出現爆量上影線／長黑且不賠錢就賣
-  名額：虧損超過 30% 或持有超過 1 年的部位不佔 5 檔名額；被移出成分股的部位也不佔
-  不停損、無持有期限、無冷卻期"""
+from rules_live import FINAL, FINAL_3, FINAL_SW18, RULE_TEXT   # 正式版設定只放 rules_live.py；研究程式讀 rules_research.py
 
 
 def extend_one_day(G):
@@ -147,7 +113,7 @@ def main():
         FINAL = {**FINAL, **FINAL_3}
         print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")
 
-    po.setup(live=True); G = rs.G                   # 每日程式用最新資料；回測（po.setup()）截到 rs.BACKTEST_END
+    po.setup(live=True); G = rs.G                   # 每日程式用最新資料；回測（po.setup()）自動截到 rs.backtest_end()
     if a.asof:
         rs.truncate(a.asof); po._mk.clear()
     po.apply(FINAL); kw = po.to_kw(FINAL)

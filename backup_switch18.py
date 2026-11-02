@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -17,7 +18,7 @@ from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
-V = {"正式版": dr.FINAL, "備案 換股18%": {**dr.FINAL, **dr.FINAL_SW18}}
+V = {"正式版": rr.BASE, "備案 換股18%": {**rr.BASE, **rr.BASE_SW18}}
 
 
 def path(G, dates, kw, s, monthly=0):

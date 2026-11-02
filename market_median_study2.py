@@ -1,6 +1,6 @@
 """接續 market_median_study：買進門檻＝中位數＋0.5σ，續抱＝中位數（k=0），以及鄰近組合。"""
 import pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 import market_median_study as mm
 from backtest import RESULTS
 from portfolio_contrib import irr
@@ -17,7 +17,7 @@ def main():
         C[f"{un}中位數＋0.5σ買(至少5%)／中位數續抱"] = {"mkt": (ul, 0.5, 0.0, 5.0)}
     names = []
     for n, x in C.items():
-        po.CONFIGS[n] = {**dr.FINAL, **x}; names.append(n)
+        po.CONFIGS[n] = {**rr.BASE, **x}; names.append(n)
     def to_kw3(cfg):
         kw = mm.to_kw2(cfg)
         if cfg.get("hold_fixed"):

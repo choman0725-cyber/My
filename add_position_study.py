@@ -5,7 +5,7 @@ X＝20／30／40／50%；定期加碼（持有滿半年仍虧損）另測部位�
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -29,7 +29,7 @@ def main():
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     names = list(VARIANTS)
     for n, ov in VARIANTS.items():
-        po.CONFIGS[n] = {**dr.FINAL, **ov}
+        po.CONFIGS[n] = {**rr.BASE, **ov}
     m = po.evaluate(names, "addpos")
     money = {}
     for n in names:

@@ -13,7 +13,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import long_history as lh
 import param_opt as po
 import portfolio_study as ps
@@ -78,7 +78,7 @@ def main():
     for i, (name, (hist, extra)) in enumerate(variants.items()):
         rules_ext.own_median = patched if hist else _orig
         po._applied["buy"] = None                # 換了中位數來源，設定相同也要重算買點（HANDOFF 11.2）
-        cfg = {**dr.FINAL, **extra}
+        cfg = {**rr.BASE, **extra}
         po.apply(cfg); kw = po.to_kw(cfg)
         tags[name] = f"{tag}_{i}"
         po.CONFIGS[name] = cfg

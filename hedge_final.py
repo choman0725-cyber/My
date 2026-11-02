@@ -2,7 +2,7 @@
 三個標的（0050／00719B／條件式：年線上 0050、線下 00719B）各跑 20 情境＋後 3 年＋500 萬。輸出 results/hedge_final_eval.csv、hedge_final_money.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -19,7 +19,7 @@ SPEC = dict(hedge_reserve=0.10, hedge_take=0.05, hedge_cooldown=10, hedge_add_ti
 
 def main():
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     V = vehicles(d)
     variants = {"正式版 E＋D": {}, "避險 0050": {**SPEC, "hedge_index": V["0050"]},
                 "避險 美債1-3年(00719B)": {**SPEC, "hedge_index": V["美債1-3年(00719B)"]},
@@ -44,7 +44,7 @@ def main():
     try:
         for i, (name, extra) in enumerate(variants.items()):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"hf_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files("hf_0", f"hf_{i}").items():

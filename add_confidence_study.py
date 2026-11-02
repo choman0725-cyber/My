@@ -5,7 +5,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -25,7 +25,7 @@ VARIANTS = {  # 名稱: (hi, hi_mult, lo, lo_mult)
 
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL); key = po._applied["buy"]
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE); key = po._applied["buy"]
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     results, money = {}, {}
     for i, (name, v) in enumerate(VARIANTS.items()):
@@ -40,7 +40,7 @@ def main():
                     mult = np.where(sc <= lo, lm, mult)
             d["add_mult"] = mult
         po._applied["buy"] = key
-        po.CONFIGS[name] = dr.FINAL
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], f"addconf_{i}").loc[name]
         if i:
             for k_, val in paired_from_files("addconf_0", f"addconf_{i}").items():

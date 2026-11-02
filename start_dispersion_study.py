@@ -6,7 +6,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -26,16 +26,16 @@ def set_rule(G, dates, orig, R, sig, prof, use_E):
         if use_E:
             ratio, med = R[sid]; growth = np.nan_to_num(med, nan=99) < gy.GROWTH_MED
             d["buy"] = np.where(growth, sig[sid] & (np.nan_to_num(ratio, nan=0) >= 1.25) & prof[sid], orig[sid])
-            d["hy_rel"] = np.where(growth, med, dr.FINAL["hold_yield"])
+            d["hy_rel"] = np.where(growth, med, rr.BASE["hold_yield"])
         else:
-            d["buy"] = orig[sid]; d["hy_rel"] = np.full(len(dates), dr.FINAL["hold_yield"])
+            d["buy"] = orig[sid]; d["hy_rel"] = np.full(len(dates), rr.BASE["hold_yield"])
 
 
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
-    sig = G["sig"][po.ENTRIES[dr.FINAL["entry"]]]
-    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"]) for sid, d in G["sub"].items()}
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
+    sig = G["sig"][po.ENTRIES[rr.BASE["entry"]]]
+    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, rr.BASE["profit_years"]) for sid, d in G["sub"].items()}
     R = gy.relative_ratio(G, dates)
     orig = {sid: d["buy"].copy() for sid, d in G["sub"].items()}
     key = po._applied["buy"]
@@ -69,7 +69,7 @@ def main():
             set_rule(G, dates, orig, R, sig, prof, use_E)
             po._applied["buy"] = key
             po.to_kw = lambda cfg, extra=extra: {**_to_kw(cfg), "hold_yield": "hy_rel", **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"sd_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files("sd_0", f"sd_{i}").items():

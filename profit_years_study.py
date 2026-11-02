@@ -16,7 +16,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -60,8 +60,8 @@ def main():
     dates = G["dates"]
     eps_all = pd.read_csv(ps.UNI / "eps_all.csv")
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
-    po.apply(dr.FINAL)
-    kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE)
+    kw = po.to_kw(rr.BASE)
 
     flags, rows = {}, []
     for sid, d in G["sub"].items():
@@ -104,7 +104,7 @@ def main():
         print(held[["代號", "名稱", "進場", "已知完整年度數", "寬鬆版可買", "嚴格版可買"]].to_string(index=False))
 
     # 20 情境＋後 3 年：正式版 vs 寬鬆版濾網（同一行程內先跑基準，再改 buy 陣列）
-    po.CONFIGS["正式版"] = dr.FINAL
+    po.CONFIGS["正式版"] = rr.BASE
     base = po.evaluate(["正式版"], "profit_years_base").loc["正式版"]
     key = po._applied["buy"]
     orig = {sid: d["buy"].copy() for sid, d in G["sub"].items()}
@@ -112,7 +112,7 @@ def main():
         d["buy"] = orig[sid] & flags[sid][0]
     po._applied["buy"] = key                      # 讓工作行程沿用改過的 buy，不重算
     name = f"＋連續{N}年賺錢（寬鬆）"
-    po.CONFIGS[name] = dr.FINAL
+    po.CONFIGS[name] = rr.BASE
     var = po.evaluate([name], "profit_years_loose").loc[name]
     m1, _ = money(G["sub"], G["member"], dates, kw)
     m1b, _ = money(G["sub"], G["member"], dates, kw, start=dates[1])

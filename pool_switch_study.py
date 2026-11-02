@@ -13,7 +13,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 from backtest import RESULTS
@@ -22,11 +22,11 @@ from portfolio_electronics import CAPITAL, POOL
 from pool_expand_study import load, setup_pool
 from stock_fit import paired_from_files
 
-RULES = {"正式版": dr.FINAL, "換股18%": {**dr.FINAL, **dr.FINAL_SW18}}
+RULES = {"正式版": rr.BASE, "換股18%": {**rr.BASE, **rr.BASE_SW18}}
 OUT = "pool_switch"
 if "abs" in sys.argv:     # 2026-11-02 使用者：剩餘肉 ≤5% 且新股預期肉 ≥10% 就換；傳產／金融／航運（非電子）的肉用自己 3 年平均殖利率算，電子股用 5%
-    RULES = {"正式版": dr.FINAL,
-             "換股 剩≤5%·新≥10%": {**dr.FINAL, "switch": {**dr.FINAL_SW18["switch"], "abs": (0.05, 0.10), "hy_key": "hy_sw"}}}
+    RULES = {"正式版": rr.BASE,
+             "換股 剩≤5%·新≥10%": {**rr.BASE, "switch": {**rr.BASE_SW18["switch"], "abs": (0.05, 0.10), "hy_key": "hy_sw"}}}
     OUT = "pool_switch_abs"
 
 

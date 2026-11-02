@@ -1,7 +1,7 @@
 """每半年「補虧結算」：賣掉有賺的，用本期已實現獲利去認列虧損部位（合計仍 >= 0），其餘續抱，之後照規則重新選股。
 檢查每半年的已實現損益是否都 >= 0，以及對長期績效的影響。"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS, SELL_COST
 from portfolio_contrib import irr
 
@@ -22,7 +22,7 @@ def main():
     C={"正式版（不結算）":{}, "半年補虧：賣有賺的＋認列小虧":{"settle":(6,"offset")}, "半年補虧：賣有賺的＋優先認列大虧":{"settle":(6,"offset_big")},
        "半年補虧：只賣達12%的＋認列小虧":{"settle":(6,"offset_target")}, "每年補虧：賣有賺的＋認列小虧":{"settle":(12,"offset")}, "半年全部出清（對照）":{"settle":(6,"all")}}
     names=[]
-    for n,x in C.items(): po.CONFIGS[n]={**dr.FINAL,**x}; names.append(n)
+    for n,x in C.items(): po.CONFIGS[n]={**rr.BASE,**x}; names.append(n)
     pd.set_option("display.width",300); pd.set_option("display.unicode.east_asian_width",True)
     tabs={}
     for n in names:

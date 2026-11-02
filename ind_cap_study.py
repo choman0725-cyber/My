@@ -5,7 +5,7 @@
 用法：python ind_cap_study.py　輸出：results/ind_cap_eval.csv、results/ind_cap_money.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -15,9 +15,9 @@ from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
 IND = pd.read_csv(ps.UNI / "industry_twse_elec.csv", dtype=str).set_index("stock_id")["industry"].to_dict()
-VARIANTS = {"正式版": dr.FINAL}
+VARIANTS = {"正式版": rr.BASE}
 for k in (2, 3, 4):
-    VARIANTS[f"同產業 ≤{k}"] = {**dr.FINAL, "ind_cap": {"cap": k, "ind": IND}}
+    VARIANTS[f"同產業 ≤{k}"] = {**rr.BASE, "ind_cap": {"cap": k, "ind": IND}}
 
 
 def main():

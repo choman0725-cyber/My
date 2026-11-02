@@ -1,6 +1,6 @@
 """加碼金額基準：進場額度（現行）vs 當下總資產÷5 vs 當下部位市值。分別套在定期加碼、以及定期＋跌深加碼。"""
 import pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
@@ -19,7 +19,7 @@ def main():
     po.setup(); G = rs.G; dates = G["dates"]
     names = []
     for n, x in C.items():
-        po.CONFIGS[n] = {**dr.FINAL, **x}; names.append(n)
+        po.CONFIGS[n] = {**rr.BASE, **x}; names.append(n)
     m = po.evaluate(names, "addbase")
     pd.set_option("display.width", 320); pd.set_option("display.unicode.east_asian_width", True)
     print("【穩健度】"); print(m.loc[names][po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())

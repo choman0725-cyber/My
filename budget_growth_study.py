@@ -7,7 +7,7 @@
 輸出 results/budget_growth_eval.csv、budget_growth_money.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -22,7 +22,7 @@ H = 0.8
 
 def main():
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     variants = {
         "正式版 E＋D": {},
         "U1 只補賺錢部位＋現金>一筆首買": {"topup": {"signal": True, "profit_only": True, "cash_min_first": True, "health_min": H}},
@@ -82,7 +82,7 @@ def main():
     try:
         for i, (name, extra) in enumerate(variants.items()):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"{tag}_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files(f"{tag}_0", f"{tag}_{i}").items():

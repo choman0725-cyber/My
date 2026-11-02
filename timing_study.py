@@ -13,7 +13,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 from backtest import RESULTS
@@ -42,8 +42,8 @@ def backtest(dates, data, sig, cons):
     for i, sid in enumerate(sorted(full_sub)):
         G["sub"] = {sid: full_sub[sid]}; G["member"] = {sid: full_mem[sid]}
         G["sig"] = {e: {sid: m[sid]} for e, m in full_sig.items() if sid in m}
-        po._applied["buy"] = None; po.apply(dr.FINAL)
-        tr, _ = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, start_n=s, **po.to_kw(dr.FINAL))
+        po._applied["buy"] = None; po.apply(rr.BASE)
+        tr, _ = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, start_n=s, **po.to_kw(rr.BASE))
         if len(tr):
             out.append(tr)
         if (i + 1) % 50 == 0:

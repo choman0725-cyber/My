@@ -14,7 +14,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -145,7 +145,7 @@ def main(which="main"):
         Yall = pd.DataFrame({s: np.where(mem_all[s].values, Y[s], np.nan) for s in Y if s in mem_all}, index=dates)
         po._mk[("all", len(dates))] = (Yall.median(axis=1).values, Yall.std(axis=1).values, Yall.notna().sum(axis=1).values)
         po._applied.clear()
-        cfg = {**dr.FINAL}
+        cfg = {**rr.BASE}
         if spec["miss"]:
             cfg.update(miss_exit=spec["miss"][1], miss_key="miss")
         po.CONFIGS[name] = cfg

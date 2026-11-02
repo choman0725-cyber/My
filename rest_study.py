@@ -2,7 +2,7 @@
 休息觸發：市場貴（全成分股殖利率中位數低於門檻）、大盤轉空（加權指數跌破季線／年線、季線下穿年線）、
 組合獲利達標（自上次出清起 +50%／+100%）、固定每 2／3 年。休息期內全部出清、不新買；結束後照正式規則重新建倉。"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS, ROOT
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
@@ -34,7 +34,7 @@ def main():
     C["每 3 年全出清再建倉"] = {"settle": (36, "all")}
     names = []
     for n, x in C.items():
-        po.CONFIGS[n] = {**dr.FINAL, **x}; names.append(n)
+        po.CONFIGS[n] = {**rr.BASE, **x}; names.append(n)
     m = po.evaluate(names, "rest")
     print("\n【穩健度】"); print(m.loc[names][po.SHOW + ["超過2年比例", "前7年回撤"]].round(1).to_string())
     out = []

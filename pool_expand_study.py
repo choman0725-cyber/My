@@ -12,7 +12,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -93,7 +93,7 @@ def setup_pool(con_df, dates, data, sig):
     G.update(dates=dates, member=member, sub={k: v for k, v in data.items() if k in member}, sig=sig, zone={},
              etf={e: ps.load_prices(e)[0]["close"].reindex(dates).ffill() for e in ("0050", "0056")})
     po._applied.clear()
-    po.apply(dr.FINAL)
+    po.apply(rr.BASE)
     return G
 
 
@@ -102,7 +102,7 @@ def main(elec=False):
     kw = None
     rows = []
     for pname, con_df in (pools_elec(cons) if elec else pools(cons)).items():
-        G = setup_pool(con_df, dates, data, sig); kw = po.to_kw(dr.FINAL)
+        G = setup_pool(con_df, dates, data, sig); kw = po.to_kw(rr.BASE)
         n_stocks = len(G["sub"])
         for hname, hstart in HORIZONS.items():
             s = d.get_indexer([pd.Timestamp(hstart)], method="bfill")[0]

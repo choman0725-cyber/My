@@ -4,7 +4,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -19,7 +19,7 @@ RESERVE = 0.20
 
 def main():
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     s17 = d.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     p50 = pd.read_csv(ROOT / "data" / "universe" / "prices" / "0050.csv", parse_dates=["date"]).set_index("date")["adj_close"].reindex(d).ffill()
     r50 = p50.pct_change().fillna(0).values
@@ -44,7 +44,7 @@ def main():
     try:
         for i, (name, extra) in enumerate(V.items(), start=10):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"rh_{i}").loc[name]
             for k_, v in paired_from_files("rh_0", f"rh_{i}").items():
                 m[k_] = v

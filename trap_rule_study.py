@@ -4,12 +4,12 @@
   - 不佔名額：A 連續套牢滿半年才不佔；B 一跌到 -30% 就不佔；C 永遠佔名額（最多 5 檔）。
 與現行正式版（持有>1年或虧>30% 不佔名額；每半年虧損就加碼）對照。"""
 import pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 
-F = dr.FINAL
+F = rr.BASE
 C = {
     "現行正式版": {},
     "新A：套牢滿半年才不佔名額＋滿半年才額外加碼": {"trap_days": 182, "time_add_trap": True},

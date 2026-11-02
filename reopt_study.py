@@ -12,13 +12,13 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import robust_study as rs
 from backtest import RESULTS
 
-BASE = dict(dr.FINAL)
+BASE = dict(rr.BASE)
 SCAN = {
     "買進下限%": [("mkt", ("all", 0.0, None, f)) for f in (4.0, 4.5, 5.5, 6.0)] + [("mkt", None)],
     "停利": [("target", v) for v in (0.08, 0.10, 0.15, 0.20, 0.30)],

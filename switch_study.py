@@ -15,7 +15,7 @@ import sys
 
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -24,61 +24,61 @@ from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
-VARIANTS = {"正式版": dr.FINAL,
-            "換股 賺≥10%·差≥10點（原案）": {**dr.FINAL, "switch": {"min_gain": 0.10, "margin": 0.10}},
-            "換股 賺≥10%·差≥5點": {**dr.FINAL, "switch": {"min_gain": 0.10, "margin": 0.05}},
-            "換股 賺≥10%·差≥20點": {**dr.FINAL, "switch": {"min_gain": 0.10, "margin": 0.20}},
-            "換股 賺≥0%·差≥10點": {**dr.FINAL, "switch": {"min_gain": 0.0, "margin": 0.10}},
-            "換股 賺≥20%·差≥10點": {**dr.FINAL, "switch": {"min_gain": 0.20, "margin": 0.10}}}
+VARIANTS = {"正式版": rr.BASE,
+            "換股 賺≥10%·差≥10點（原案）": {**rr.BASE, "switch": {"min_gain": 0.10, "margin": 0.10}},
+            "換股 賺≥10%·差≥5點": {**rr.BASE, "switch": {"min_gain": 0.10, "margin": 0.05}},
+            "換股 賺≥10%·差≥20點": {**rr.BASE, "switch": {"min_gain": 0.10, "margin": 0.20}},
+            "換股 賺≥0%·差≥10點": {**rr.BASE, "switch": {"min_gain": 0.0, "margin": 0.10}},
+            "換股 賺≥20%·差≥10點": {**rr.BASE, "switch": {"min_gain": 0.20, "margin": 0.10}}}
 
 OUT = "switch"
 if "v2" in sys.argv:
     _V2 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": True, "margin": 0.10}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v2 賺≥12%·5%殖利率·金額多10%（使用者）": {**dr.FINAL, "switch": _V2},
-                "v2 同上·只比百分比（不看金額）": {**dr.FINAL, "switch": {**_V2, "money": False}},
-                "v2 金額多5%": {**dr.FINAL, "switch": {**_V2, "margin": 0.05}},
-                "v2 金額多20%": {**dr.FINAL, "switch": {**_V2, "margin": 0.20}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v2 賺≥12%·5%殖利率·金額多10%（使用者）": {**rr.BASE, "switch": _V2},
+                "v2 同上·只比百分比（不看金額）": {**rr.BASE, "switch": {**_V2, "money": False}},
+                "v2 金額多5%": {**rr.BASE, "switch": {**_V2, "margin": 0.05}},
+                "v2 金額多20%": {**rr.BASE, "switch": {**_V2, "margin": 0.20}}}
     OUT = "switch_v2"
 if "v3" in sys.argv:      # 2026-11-02 使用者更正：肉用全額（百分比）比，實際照信心首買比例投入，且只換進信心高的
     _V3 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v3 賺≥12%·5%殖利率·全額比多10%·只換信心高（使用者）": {**dr.FINAL, "switch": _V3},
-                "v3 不限信心（對照）": {**dr.FINAL, "switch": {**_V3, "min_frac": None}},
-                "v3 多5%": {**dr.FINAL, "switch": {**_V3, "margin": 0.05}},
-                "v3 多20%": {**dr.FINAL, "switch": {**_V3, "margin": 0.20}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v3 賺≥12%·5%殖利率·全額比多10%·只換信心高（使用者）": {**rr.BASE, "switch": _V3},
+                "v3 不限信心（對照）": {**rr.BASE, "switch": {**_V3, "min_frac": None}},
+                "v3 多5%": {**rr.BASE, "switch": {**_V3, "margin": 0.05}},
+                "v3 多20%": {**rr.BASE, "switch": {**_V3, "margin": 0.20}}}
     OUT = "switch_v3"
 if "v4" in sys.argv:      # 2026-11-02 使用者：v3 再加「成長股不參與換股」（持股不換出、新股不換進）
     _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v4 v3＋成長股不換（使用者）": {**dr.FINAL, "switch": _V4},
-                "v4 不限信心": {**dr.FINAL, "switch": {**_V4, "min_frac": None}},
-                "v4 多5%": {**dr.FINAL, "switch": {**_V4, "margin": 0.05}},
-                "v4 多20%": {**dr.FINAL, "switch": {**_V4, "margin": 0.20}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v4 v3＋成長股不換（使用者）": {**rr.BASE, "switch": _V4},
+                "v4 不限信心": {**rr.BASE, "switch": {**_V4, "min_frac": None}},
+                "v4 多5%": {**rr.BASE, "switch": {**_V4, "margin": 0.05}},
+                "v4 多20%": {**rr.BASE, "switch": {**_V4, "margin": 0.20}}}
     OUT = "switch_v4"
 if "v5" in sys.argv:      # 2026-11-02 使用者「滿足點改為 10%」：兩種解讀都跑（觸發改賺 ≥10%；剩餘／預期肉下限＝+10%），另跑兩者都改
     _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v4（賺≥12%·5%殖利率·不設下限）": {**dr.FINAL, "switch": _V4},
-                "v5a 賺≥10% 就比": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.10}},
-                "v5b 滿足點＝max(+10%, 5%殖利率)": {**dr.FINAL, "switch": {**_V4, "floor": 0.10}},
-                "v5c 兩者都改": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.10, "floor": 0.10}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v4（賺≥12%·5%殖利率·不設下限）": {**rr.BASE, "switch": _V4},
+                "v5a 賺≥10% 就比": {**rr.BASE, "switch": {**_V4, "min_gain": 0.10}},
+                "v5b 滿足點＝max(+10%, 5%殖利率)": {**rr.BASE, "switch": {**_V4, "floor": 0.10}},
+                "v5c 兩者都改": {**rr.BASE, "switch": {**_V4, "min_gain": 0.10, "floor": 0.10}}}
     OUT = "switch_v5"
 if "v6" in sys.argv:      # 2026-11-02 使用者：v4 改成賺 ≥8% 就開始比（另附 6%、0% 看趨勢）
     _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v4（賺≥12%）": {**dr.FINAL, "switch": _V4},
-                "v6 賺≥8%（使用者）": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.08}},
-                "v6 賺≥6%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.06}},
-                "v6 賺≥0%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.0}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v4（賺≥12%）": {**rr.BASE, "switch": _V4},
+                "v6 賺≥8%（使用者）": {**rr.BASE, "switch": {**_V4, "min_gain": 0.08}},
+                "v6 賺≥6%": {**rr.BASE, "switch": {**_V4, "min_gain": 0.06}},
+                "v6 賺≥0%": {**rr.BASE, "switch": {**_V4, "min_gain": 0.0}}}
     OUT = "switch_v6"
 if "v7" in sys.argv:      # 2026-11-02 使用者：v4 改成賺 ≥15%／18%／20% 才開始比
     _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
-    VARIANTS = {"正式版": dr.FINAL,
-                "v4（賺≥12%）": {**dr.FINAL, "switch": _V4},
-                "v7 賺≥15%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.15}},
-                "v7 賺≥18%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.18}},
-                "v7 賺≥20%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.20}}}
+    VARIANTS = {"正式版": rr.BASE,
+                "v4（賺≥12%）": {**rr.BASE, "switch": _V4},
+                "v7 賺≥15%": {**rr.BASE, "switch": {**_V4, "min_gain": 0.15}},
+                "v7 賺≥18%": {**rr.BASE, "switch": {**_V4, "min_gain": 0.18}},
+                "v7 賺≥20%": {**rr.BASE, "switch": {**_V4, "min_gain": 0.20}}}
     OUT = "switch_v7"
 
 

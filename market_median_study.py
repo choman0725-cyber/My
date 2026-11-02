@@ -3,7 +3,7 @@
 每天只用當天資料，無前視。對照正式版（固定 5% / 4.75%）。用法：python market_median_study.py"""
 import pickle
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
@@ -69,9 +69,9 @@ def main():
         C[f"{un}中位數買(至少5%)／固定4.75%續抱"] = {"mkt_buy_only": (ul, 0.0, 5.0)}
     names = []
     for n, x in C.items():
-        cfg = {**dr.FINAL, **x}
+        cfg = {**rr.BASE, **x}
         if "mkt_buy_only" in x:   # 只改買進門檻，續抱維持固定 4.75%
-            ul, k, fl = x.pop("mkt_buy_only"); cfg = {**dr.FINAL, "mkt": (ul, k, None, fl), "hold_fixed": True}
+            ul, k, fl = x.pop("mkt_buy_only"); cfg = {**rr.BASE, "mkt": (ul, k, None, fl), "hold_fixed": True}
         po.CONFIGS[n] = cfg; names.append(n)
     # hold_fixed：to_kw 不把 hold_yield 換成陣列
     def to_kw3(cfg):

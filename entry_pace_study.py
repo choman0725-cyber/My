@@ -8,7 +8,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -22,7 +22,7 @@ from hedge_study import bull_mask
 
 def main():
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     bull = bull_mask(d)
     base_ff = {sid: G["sub"][sid]["first_frac"].copy() for sid in G["sub"]}
     # (kwargs, first_frac 乘數陣列 or None, add_mult 陣列 or None)
@@ -72,7 +72,7 @@ def main():
         for i, (name, (extra, ffm, am)) in enumerate(variants.items()):
             apply_arrays(ffm, am)
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"ep_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files("ep_0", f"ep_{i}").items():

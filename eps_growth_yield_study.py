@@ -13,7 +13,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -64,11 +64,11 @@ def required_yield(g, form, param):
 
 def main():
     po.setup(); G = rs.G; dates = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
     s_n = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
-    sig = G["sig"][po.ENTRIES[dr.FINAL["entry"]]]
-    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, dr.FINAL["profit_years"]) for sid, d in G["sub"].items()}
+    sig = G["sig"][po.ENTRIES[rr.BASE["entry"]]]
+    prof = {sid: ps.profit_years_flag(d.get("annual_eps"), dates, rr.BASE["profit_years"]) for sid, d in G["sub"].items()}
     orig = {sid: d["buy"].copy() for sid, d in G["sub"].items()}
     key = po._applied["buy"]
     Gs = {1: growth_series(G, dates, 1), 4: growth_series(G, dates, 4)}
@@ -113,13 +113,13 @@ def main():
     def run(name, tag, form=None, param=None, k=1.0, smooth=1):
         for sid, d in G["sub"].items():
             if form is None:
-                d["buy"] = orig[sid]; d["hy_req"] = np.full(len(dates), dr.FINAL["hold_yield"])
+                d["buy"] = orig[sid]; d["hy_req"] = np.full(len(dates), rr.BASE["hold_yield"])
             else:
                 req = required_yield(Gs[smooth][sid], form, param)
                 d["buy"] = sig[sid] & (np.nan_to_num(d["yield"], nan=-1) >= req * k) & prof[sid]
                 d["hy_req"] = req
         po._applied["buy"] = key
-        po.CONFIGS[name] = dr.FINAL
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], tag).loc[name]
         if tag != "eg_A":
             for k_, v in paired_from_files("eg_A", tag).items():

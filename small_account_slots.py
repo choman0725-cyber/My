@@ -8,6 +8,7 @@ import sys
 import pandas as pd
 
 import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -17,8 +18,8 @@ from stock_fit import paired_from_files
 
 CAP = float(sys.argv[1]) if len(sys.argv) > 1 else 2_360_000
 MONTHLY = float(sys.argv[2]) if len(sys.argv) > 2 else 20_000
-V = {"5 檔正式版": dr.FINAL, "3 檔版（首買 65%）": {**dr.FINAL, **dr.FINAL_3},
-     "3 檔版 首買 50%": {**dr.FINAL, **dr.FINAL_3, "first": 0.5}, "3 檔版 首買 80%": {**dr.FINAL, **dr.FINAL_3, "first": 0.8}}
+V = {"5 檔正式版": rr.BASE, "3 檔版（首買 65%）": {**rr.BASE, **rr.BASE_3},
+     "3 檔版 首買 50%": {**rr.BASE, **rr.BASE_3, "first": 0.5}, "3 檔版 首買 80%": {**rr.BASE, **rr.BASE_3, "first": 0.8}}
 
 
 def max_concurrent(tr, dates):

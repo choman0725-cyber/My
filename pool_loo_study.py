@@ -7,7 +7,7 @@ import time
 
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -42,9 +42,9 @@ def main():
     po.setup(); G = rs.G; dates = G["dates"]
     full = {k: G[k] for k in ("sub", "member", "sig", "zone")}
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
-    kw = po.to_kw(dr.FINAL)
-    po.CONFIGS["base"] = dr.FINAL
-    po.apply(dr.FINAL)
+    kw = po.to_kw(rr.BASE)
+    po.CONFIGS["base"] = rr.BASE
+    po.apply(rr.BASE)
     base = po.evaluate(["base"], "loo_base").loc["base"]
     bp = paths(G, dates, kw, s17)
     print(f"基準 47 檔：三段 {base['三段平均']:.2f} σ {base['標準差平均']:.2f} 500萬 {bp['12-28'][0]}／{bp['01-03'][0]}", flush=True)
@@ -54,8 +54,8 @@ def main():
         t0 = time.time()
         own = [own_pnl(bp[k][1], sid) for k in ("12-28", "01-03")]
         restrict(G, full, set(POOL) - {sid})
-        po.apply(dr.FINAL)
-        name = f"去{sid}"; po.CONFIGS[name] = dr.FINAL
+        po.apply(rr.BASE)
+        name = f"去{sid}"; po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], f"loo_{sid}").loc[name]
         p = paired_from_files("loo_base", f"loo_{sid}")
         mp = paths(G, dates, kw, s17)

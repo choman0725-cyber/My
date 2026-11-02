@@ -8,7 +8,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import miss_study as ms
 import param_opt as po
 import portfolio_study as ps
@@ -45,7 +45,7 @@ def main():
         for sid, d in G["sub"].items():
             d["hy_est"] = np.where(ann[sid], 4.75, h)
         po._applied.clear()
-        cfg = {**dr.FINAL, "hold_est": h if h != 4.75 else None}
+        cfg = {**rr.BASE, "hold_est": h if h != 4.75 else None}
         po.CONFIGS[name] = cfg
         po.apply(cfg)
         m = po.evaluate([name], "holdfloor")

@@ -8,7 +8,7 @@ C. 續抱加碼：續抱中、信心 ≥3、出現加碼訊號 → 加碼部位�
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -39,7 +39,7 @@ def main():
     _to_kw = po.to_kw
     try:
         for i, (name, v) in enumerate(V.items()):
-            cfg = {**dr.FINAL, **v.get("cfg", {})}
+            cfg = {**rr.BASE, **v.get("cfg", {})}
             po.apply(cfg)
             for sid, d in G["sub"].items():
                 sc = d["conf_score"]
@@ -67,7 +67,7 @@ def main():
         po.to_kw = _to_kw
         for d in G["sub"].values():
             d.pop("hold_keep", None); d.pop("win_add_ok", None)
-        po.apply(dr.FINAL)
+        po.apply(rr.BASE)
     out = pd.DataFrame(results).T
     show = [c for c in ["前7年", "前7年最差10", "延續", "單獨", "三段平均", "最差10最小", "標準差平均", "超過2年比例", "前7年配對", "前7年配對最差", "後3年配對", "後3年配對最差"] if c in out.columns]
     mon = pd.DataFrame(money).T

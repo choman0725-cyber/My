@@ -9,7 +9,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -96,7 +96,7 @@ def yearly_table(eq, d, extra_series=None, trades=None, ledger=None):
 
 def main(hedge=False):
     G = setup(); d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     etf = {"0050%": pd.read_csv(ps.UNI / "prices" / "0050.csv", parse_dates=["date"]).set_index("date")["adj_close"]}
     led = []
     tr, eq = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=1, ledger=led, **kw)

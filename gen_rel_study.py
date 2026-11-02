@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -31,7 +31,7 @@ def main():
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     results, money, events = {}, {}, {}
     for i, (name, extra) in enumerate(variants.items()):
-        cfg = {**dr.FINAL, **extra}
+        cfg = {**rr.BASE, **extra}
         po.apply(cfg); kw = po.to_kw(cfg)
         sc = np.concatenate([d["conf_score"][s17:][d["buy"][s17:]] for d in G["sub"].values()])
         events[name] = dict(買點事件=len(sc), 信心3以上比例=round(100 * (sc >= 3).mean(), 1), 平均信心=round(sc.mean(), 2))

@@ -1,12 +1,12 @@
 """每半年結算：(1) 正式版本身每半年的帳面與已實現損益長什麼樣；(2) 若強制每半年結算（賣出有賺的／達停利的／全部），績效會變怎樣。"""
 import numpy as np, pandas as pd
-import daily_run as dr, param_opt as po, portfolio_study as ps, robust_study as rs
+import rules_research as rr, param_opt as po, portfolio_study as ps, robust_study as rs
 from backtest import RESULTS, SELL_COST
 from portfolio_contrib import irr
 
 def main():
     po.setup(); G=rs.G; dates=G["dates"]; cap=5e6
-    po.apply(dr.FINAL); kw=po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw=po.to_kw(rr.BASE)
     tr,eq=ps.run(G["sub"],G["member"],dates,capital=cap,**kw)
     # (1) 半年報表：期末資產、半年報酬、已實現損益、未實現損益、期末現金
     half=eq.resample("6ME").last().dropna()*cap
@@ -31,7 +31,7 @@ def main():
     C={"正式版（不結算）":{}, "每半年賣出有賺的":{"settle":(6,"profit")}, "每半年賣出達12%的（不管殖利率）":{"settle":(6,"target")},
        "每半年全部出清":{"settle":(6,"all")}, "每年賣出有賺的":{"settle":(12,"profit")}, "每年全部出清":{"settle":(12,"all")}}
     names=[]
-    for n,x in C.items(): po.CONFIGS[n]={**dr.FINAL,**x}; names.append(n)
+    for n,x in C.items(): po.CONFIGS[n]={**rr.BASE,**x}; names.append(n)
     m=po.evaluate(names,"settle")
     print("\n【穩健度】"); print(m.loc[names][po.SHOW].round(1).to_string())
     money=[]

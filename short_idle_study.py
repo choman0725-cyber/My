@@ -28,7 +28,7 @@ from multiprocessing import Pool
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -97,7 +97,7 @@ def short_signals(d, dates):
 
 def setup():
     po.setup()
-    po.apply(dr.FINAL)
+    po.apply(rr.BASE)
     dates = G["dates"]
     N = len(dates)
     data, _ = pickle.loads((RESULTS / "portfolio_prepared.pkl").read_bytes())
@@ -138,7 +138,7 @@ def setup():
 def long_path(start="2017-01-03", contrib_sched=None):
     """跑正式版多頭，回傳每日多頭資產、交易後現金、持股檔數、持股集合（以初始資金 1.0 計）與現金流。"""
     dates = S["dates"]; N = S["N"]
-    kw = po.to_kw(dr.FINAL)
+    kw = po.to_kw(rr.BASE)
     s_n = dates.get_indexer([pd.Timestamp(start)], method="bfill")[0]
     sched = {y: a for y, a in (contrib_sched or {}).items() if dates[s_n].year < y}
     first_day = {y: dates.get_indexer([dates[dates.year == y][0]])[0] for y in sched}

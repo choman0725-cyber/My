@@ -3,7 +3,7 @@
 對照：加「賺 5% 領出」、投入 100% 現金。輸出 results/hedge_trigger_eval.csv、hedge_trigger_money.csv、hedge_trigger_episodes.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import oos_study as oos
 import param_opt as po
 import portfolio_study as ps
@@ -19,7 +19,7 @@ SPEC = dict(hedge_mode="exits", hedge_trigger_exits=2, hedge_frac=0.5, hedge_tak
 
 def main():
     po.setup(); G = rs.G; d = G["dates"]
-    po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
     V = vehicles(d)
     veh = {"0050": V["0050"], "00719B": V["美債1-3年(00719B)"], "條件式": V["條件式(年線上0050/線下短債)"]}
     variants = {"正式版 E＋D": {}}
@@ -63,7 +63,7 @@ def main():
     try:
         for i, (name, extra) in enumerate(variants.items()):
             po.to_kw = lambda c, extra=extra: {**_to_kw(c), **extra}
-            po.CONFIGS[name] = dr.FINAL
+            po.CONFIGS[name] = rr.BASE
             m = po.evaluate([name], f"ht_{i}").loc[name]
             if i:
                 for k_, v in paired_from_files("ht_0", f"ht_{i}").items():

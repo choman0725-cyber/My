@@ -11,7 +11,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -20,9 +20,9 @@ from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
-H3 = {**dr.FINAL, "max_slots": 3, "hard_cap": True}
-VARIANTS = {"正式版 5 檔": dr.FINAL,
-            "名額 3（套牢不佔名額）": {**dr.FINAL, "max_slots": 3},
+H3 = {**rr.BASE, "max_slots": 3, "hard_cap": True}
+VARIANTS = {"正式版 5 檔": rr.BASE,
+            "名額 3（套牢不佔名額）": {**rr.BASE, "max_slots": 3},
             "硬上限 3（基準）": H3,
             **{f"硬3 首買 {f:.0%}": {**H3, "first": f} for f in (0.35, 0.65, 0.80, 1.00)},
             "硬3 信心首買 100%": {**H3, "conf_first": (3, 1.0)},
@@ -49,7 +49,7 @@ def main():
     variants = VARIANTS
     extra = [a for a in sys.argv[1:] if "=" in a]
     if extra:                                   # 合併驗證：python slot3_study.py "名稱={...}"
-        variants = {"正式版 5 檔": dr.FINAL, BASE: H3,
+        variants = {"正式版 5 檔": rr.BASE, BASE: H3,
                     **{a.split("=", 1)[0]: {**H3, **{k: tuple(v) if isinstance(v, list) else v for k, v in json.loads(a.split("=", 1)[1]).items()}} for a in extra}}
     po.setup(); G = rs.G; dates = G["dates"]
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]

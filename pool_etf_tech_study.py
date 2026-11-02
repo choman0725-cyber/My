@@ -8,7 +8,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 from backtest import RESULTS
@@ -38,15 +38,15 @@ def main():
     e16 = d.get_indexer([pd.Timestamp("2016-12-30")], method="ffill")[0]
     res, money, hist = {}, {}, []
     for i, (name, cdf) in enumerate(P.items()):
-        G = setup_pool(cdf, d, data, sig); kw = po.to_kw(dr.FINAL)
-        po.CONFIGS[name] = dr.FINAL
+        G = setup_pool(cdf, d, data, sig); kw = po.to_kw(rr.BASE)
+        po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], f"pet_{i}").loc[name]
         if i:
             for k_, v in paired_from_files("pet_0", f"pet_{i}").items():
                 m[k_] = v
         m["檔數"] = len(G["sub"])
         res[name] = m
-        po.apply(dr.FINAL)
+        po.apply(rr.BASE)
         for sn, s in (("2016-12-28", s1228), ("2017-01-03", s17)):
             tr, eq = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=s, **kw)
             v = eq.iloc[-1] / eq.iloc[0]

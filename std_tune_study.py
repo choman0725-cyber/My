@@ -4,14 +4,14 @@
 輸出 results/std_tune_eval.csv"""
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import robust_study as rs
 from backtest import RESULTS
 from stock_fit import paired_from_files
 from pool_expand_study import load, pools_elec, setup_pool
 
-U1 = dr.FINAL["topup"]
+U1 = rr.BASE["topup"]
 VARIANTS = {
     "E＋D 無補足": None,
     "U1 正式版": U1,
@@ -33,7 +33,7 @@ def main():
         setup_pool(P[key], dates, data, sig)
         base_tag = None
         for vname, tu in VARIANTS.items():
-            cfg = {k: v for k, v in dr.FINAL.items() if k != "topup"}
+            cfg = {k: v for k, v in rr.BASE.items() if k != "topup"}
             if tu is not None:
                 cfg["topup"] = tu
             name = f"{pool_name} {vname}"

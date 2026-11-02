@@ -12,7 +12,7 @@
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -41,8 +41,8 @@ def main():
     po.setup()
     G = rs.G
     dates = G["dates"]
-    po.apply(dr.FINAL)
-    kw = po.to_kw(dr.FINAL)
+    po.apply(rr.BASE)
+    kw = po.to_kw(rr.BASE)
     names = dict(pd.read_csv(ps.UNI / "prices_manifest.csv", dtype=str)[["stock_id", "name"]].values)
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
 
@@ -93,7 +93,7 @@ def main():
     base_sub, base_mem = dict(G["sub"]), dict(G["member"])
     key = po._applied["buy"]
     results = {}
-    po.CONFIGS["正式版"] = dr.FINAL
+    po.CONFIGS["正式版"] = rr.BASE
     for k, m in conds.items():
         keep = set(st.loc[m, "代號"])
         if len(keep) == 0 or (len(keep) == len(st) and k != "正式版（75 檔）"):
@@ -101,7 +101,7 @@ def main():
         G["sub"].clear(); G["sub"].update({s: v for s, v in base_sub.items() if s in keep})
         G["member"].clear(); G["member"].update({s: v for s, v in base_mem.items() if s in keep})
         po._applied["buy"] = key
-        po.CONFIGS[k] = dr.FINAL
+        po.CONFIGS[k] = rr.BASE
         results[k] = k
     names_eval = list(results)
     G["sub"].clear(); G["sub"].update(base_sub); G["member"].clear(); G["member"].update(base_mem)

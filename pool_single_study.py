@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -43,8 +43,8 @@ def main():
     for i, sid in enumerate(sorted(POOL)):
         t0 = time.time()
         restrict(G, full, {sid})
-        po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
-        name = f"只{sid}"; po.CONFIGS[name] = dr.FINAL
+        po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
+        name = f"只{sid}"; po.CONFIGS[name] = rr.BASE
         m = po.evaluate([name], f"single_{sid}").loc[name]
         row = dict(代號=sid, 名稱=NAMES.loc[sid, "name"], 產業=NAMES.loc[sid, "industry"].replace("設備業", "").replace("業", ""),
                    成分股天數=int(full["member"][sid].iloc[1:].sum()), 三段平均=round(m["三段平均"], 2), 標準差=round(m["標準差平均"], 2))

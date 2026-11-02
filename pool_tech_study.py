@@ -14,7 +14,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import param_opt as po
 import portfolio_study as ps
 import robust_study as rs
@@ -68,7 +68,7 @@ def hist():
     rows = []
     for name, pool in POOLS.items():
         keep = restrict(G, full, pool)
-        po.apply(dr.FINAL); kw = po.to_kw(dr.FINAL)
+        po.apply(rr.BASE); kw = po.to_kw(rr.BASE)
         for yr in range(2007, 2017):
             s = d.get_indexer([pd.Timestamp(yr, 1, 1)], method="bfill")[0]
             tr, eq = ps.run(G["sub"], G["member"], d, capital=CAPITAL, start_n=s, **kw)
@@ -99,7 +99,7 @@ def main():
     results, money = {}, {}
     for i, (name, pool) in enumerate(POOLS.items()):
         keep = restrict(G, full, pool)
-        cfg = dr.FINAL
+        cfg = rr.BASE
         po.apply(cfg); kw = po.to_kw(cfg)
         po.CONFIGS[name] = cfg
         m = po.evaluate([name], f"{OUT}_{i}").loc[name]

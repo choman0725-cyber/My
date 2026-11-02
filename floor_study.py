@@ -8,7 +8,7 @@ import pickle
 import numpy as np
 import pandas as pd
 
-import daily_run as dr
+import rules_research as rr
 import miss_study as ms
 import param_opt as po
 import portfolio_study as ps
@@ -57,7 +57,7 @@ def main():
     for f in FLOORS:
         name = "正式版（底線 5.0）" if f == 5.0 else f"推估日底線 {f}／公告日 5.0"
         po._applied.clear()
-        cfg = {**dr.FINAL, "floor_est": f if f != 5.0 else None}
+        cfg = {**rr.BASE, "floor_est": f if f != 5.0 else None}
         po.CONFIGS[name] = cfg
         po.apply(cfg)
         m = po.evaluate([name], "floor")

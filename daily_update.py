@@ -191,7 +191,7 @@ def account_sections():
 def actions(text):
     """報告裡每個帳戶的「明天開盤要做的事」段落（比對暫定版與正式版用）。"""
     out = {}
-    for part in text.split("\n## ")[1:]:
+    for part in ("\n" + text).split("\n## ")[1:]:
         a_ = part.find("【明天")
         out[part.splitlines()[0]] = part[a_:part.find("【觀察", a_)].strip() if a_ >= 0 else ""
     return out
@@ -239,9 +239,13 @@ def main_yahoo(a, today):
         msg = f"# {today} 沒有新的交易日資料（Yahoo）\n\n加權指數沒有今天的收盤（休市，或 Yahoo 到 {YAHOO_GIVE_UP} 仍未更新）。\n"
         rep.write_text(msg, encoding="utf-8"); print(msg)
         return 0
-    rebuild()
+    import daily_fast
+    fast = daily_fast.fast_rebuild(list(json.loads(dy.PROV.read_text(encoding="utf-8"))["sids"]))
+    if not fast:                                    # 快取日曆對不上（例如前一天沒跑正式版）→ 全部重建
+        rebuild()
     lines = [f"# {today} 暫定建議（Yahoo 股市收盤資料；16:00 以 FinMind 驗證後的正式版為準）", "",
-             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；耗時 {(now_tw() - t0).seconds // 60} 分鐘",
+             f"- Yahoo 接上今天的股票 {info['n']} 檔；加權指數收盤 {info['taiex']:,.2f}；"
+             f"{'快速重建（只重算這幾檔，其他股票沿用前一天）' if fast else '全部重建'}；耗時 {(now_tw() - t0).seconds // 60} 分鐘",
              f"- Yahoo 沒有今天資料：{', '.join(info['miss']) or '無'}",
              f"- 原本就沒到前一個交易日（不補、等 FinMind）：{', '.join(info['skip']) or '無'}",
              "- 今天若有除權息／減資，暫定資料還沒調整，以 16:00 正式版為準", ""]

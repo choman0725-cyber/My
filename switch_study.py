@@ -9,7 +9,8 @@
        輸出：results/switch_v3_*.csv
      python switch_study.py v4：v3 ＋ 成長股（殖利率中位 <4%、用自己中位數買的日子）不參與換股　輸出：results/switch_v4_*.csv
      python switch_study.py v5：v4 的「滿足點」改 10%（觸發賺 ≥10%／肉的下限 +10%／兩者）　輸出：results/switch_v5_*.csv
-     python switch_study.py v6：v4 改賺 ≥8% 就比（另附 6%、0%）　輸出：results/switch_v6_*.csv"""
+     python switch_study.py v6：v4 改賺 ≥8% 就比（另附 6%、0%）　輸出：results/switch_v6_*.csv
+     python switch_study.py v7：v4 改賺 ≥15%／18%／20% 才比　輸出：results/switch_v7_*.csv"""
 import sys
 
 import pandas as pd
@@ -71,6 +72,14 @@ if "v6" in sys.argv:      # 2026-11-02 使用者：v4 改成賺 ≥8% 就開始�
                 "v6 賺≥6%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.06}},
                 "v6 賺≥0%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.0}}}
     OUT = "switch_v6"
+if "v7" in sys.argv:      # 2026-11-02 使用者：v4 改成賺 ≥15%／18%／20% 才開始比
+    _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
+    VARIANTS = {"正式版": dr.FINAL,
+                "v4（賺≥12%）": {**dr.FINAL, "switch": _V4},
+                "v7 賺≥15%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.15}},
+                "v7 賺≥18%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.18}},
+                "v7 賺≥20%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.20}}}
+    OUT = "switch_v7"
 
 
 def main():

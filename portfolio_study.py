@@ -272,7 +272,7 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None):
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None):
     """switch（換股，2026-11-02 使用者）：名額滿、又出現新買點時，比較「剩餘肉」，例如 {"min_gain": 0.10, "margin": 0.10}。
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
@@ -386,6 +386,8 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
     offset_only_bad：只處理「基本面變壞」的部位（最近兩季單季 EPS 都年減，或預估殖利率 < 3%）。
     exit_bad：基本面變壞且虧損的部位，不等獲利，直接全部賣出。
     stale_free_slot：虧損超過 30% 或持有超過 1 年的部位，不佔「最多 5 檔」的名額。
+    ind_cap：同一產業最多佔幾個名額（2026-11-02 使用者，HANDOFF 第 9 節），例如 {"cap": 3, "ind": {代號: 產業}}；
+      只算佔名額的部位（套牢、被剔除的不算）與部位的 slots；超過上限的新買點跳過，空位讓給排名較後的其他產業股票。
     slot_split：分區名額，例如 {"0050": (2, member_0050), "0056": (3, member_0056)}；
       member_x 為 {代號: numpy 布林陣列}；每區只能放該 ETF 當天的成分股，兩區都可放時優先放排在後面的區（0056）。
       設定時忽略 MAX_SLOTS 的總名額，one_per_day / cooldown 仍為全組合共用。
@@ -973,6 +975,12 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                     better = {w for w, c in watch_.items() if c > conf_(sid)}
                     if better:
                         waits.setdefault(sid, {"until": n + wait_better, "watch": better})
+                        continue
+                if ind_cap:
+                    ind_ = ind_cap["ind"].get(sid)
+                    used_ = sum(q.get("slots", 1) for s_, q in positions.items()
+                                if occupies(s_, q) and ind_cap["ind"].get(s_) == ind_)
+                    if ind_ is not None and used_ >= ind_cap["cap"]:
                         continue
                 zone = None
                 if slot_split:

@@ -133,6 +133,8 @@ def to_kw(cfg):
         kw["topup"] = cfg["topup"]        # 2026-11-01 正式版 U1：賺錢部位買點再現補足
     if cfg.get("switch"):
         kw["switch"] = cfg["switch"]      # 換股：剩餘肉比較（switch_study）
+    if cfg.get("ind_cap"):
+        kw["ind_cap"] = cfg["ind_cap"]    # 同產業名額上限（ind_cap_study）
     if cfg.get("hard_cap"):               # 硬上限：套牢、被剔除的部位也佔名額，同時最多持有 max_slots 檔（slot3_study）
         kw.pop("stale_free_slot", None)
         kw["free_slot_removed"] = False

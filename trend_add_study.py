@@ -5,7 +5,8 @@ MA5′ > MA20′ > MA60′ 都成立（r=−3%＝禁得起兩天回檔的預算�
 補完後現金 ≥ 一筆首買。對照：確認版（今天已 MA5 > MA20 > MA60 首次成立，不預測）。
 判準（2026-11-02 晚放寬）：σ 上升 ≤0.15 且前 7 年配對 ≥14/20 好。
 用法：python trend_add_study.py　輸出：results/trend_add_eval.csv、trend_add_money.csv、trend_add_counts.csv
-     python trend_add_study.py h1：（2026-11-02 使用者）預算只算 1 天，r 掃 −3%／−4%／−5%　輸出：results/trend_add_h1_*.csv"""
+     python trend_add_study.py h1：（2026-11-02 使用者）預算只算 1 天，r 掃 −3%／−4%／−5%　輸出：results/trend_add_h1_*.csv
+     python trend_add_study.py today：今天是多頭排列（MA5>MA20>MA60）就可加，不限首次成立日　輸出：results/trend_add_today_*.csv"""
 import sys
 
 import numpy as np
@@ -38,6 +39,10 @@ if "h1" in sys.argv:
     SIGNALS = {f"trend_h1_r{k}": (lambda k_: (lambda df: ma_align_forecast(df, r=-k_ / 100, horizons=(1,))))(k) for k in (3, 4, 5)}
     VARIANTS = {"正式版": rr.BASE, **{f"多頭加碼 預算−{k}%×1天": {**rr.BASE, "trend_add": {**ADD, "key": f"trend_h1_r{k}"}} for k in (3, 4, 5)}}
     OUT = "trend_add_h1"
+if "today" in sys.argv:    # 2026-11-02 使用者「測多頭排列當天」：不限首次成立日，排列期間任一天（部位賺錢、殖利率 ≥4.75% 時）都可加，次數仍最多 2
+    SIGNALS = {"trend_today": lambda df: ma_align_forecast(df, horizons=(0,), first_only=False)}
+    VARIANTS = {"正式版": rr.BASE, "多頭加碼 排列期間任一天": {**rr.BASE, "trend_add": {**ADD, "key": "trend_today"}}}
+    OUT = "trend_add_today"
 
 
 def attach_signals(G):

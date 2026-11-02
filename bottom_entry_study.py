@@ -14,22 +14,15 @@ import portfolio_study as ps
 import robust_study as rs
 import rules_research as rr
 from backtest import RESULTS
-from indicators import atr, shadows, sma
+from indicators import atr, bottom_hold, shadows, sma
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
 
 
 def bottom_a(df, dd=0.15, tol=0.03, lookback=60, low_win=20, strict=False):
-    """A 跌深落底。前低＝三根 K 之前的 low_win 日最低點；三根 low 都 ≥ 前低 ×(1−tol)；當天距 lookback 日最高收盤 ≤ −dd。"""
-    c, lo = df["close"], df["low"]
-    deep = c / c.rolling(lookback).max() - 1 <= -dd
-    prev_low = lo.rolling(low_win).min().shift(3)
-    held = (lo.shift(2) >= prev_low * (1 - tol)) & (lo.shift(1) >= prev_low * (1 - tol)) & (lo >= prev_low * (1 - tol))
-    if strict:
-        tested = pd.concat([lo.shift(2), lo.shift(1), lo], axis=1).min(axis=1) <= prev_low * (1 + tol)
-        held &= tested
-    return (deep & held).fillna(False)
+    """A 跌深落底（定義搬到 indicators.bottom_hold；嚴格版 2026-11-02 已採用進「任一」，本檔的「正式版」欄位從此已含它）。"""
+    return bottom_hold(df, dd, tol, lookback, low_win, strict)
 
 
 def bottom_b(df, vol_k=1.0, wick_ratio=0.5):

@@ -462,6 +462,20 @@ def pv_triggers(df):
     }
 
 
+def bottom_hold(df, dd=0.15, tol=0.03, lookback=60, low_win=20, strict=True):
+    """落底買點（2026-11-02 使用者提案、同日採用，bottom_entry_study.py「落底 A 嚴格」）：
+    當天收盤距 lookback 日最高收盤已跌 ≥ dd，且連續三根日 K 的低點都 ≥ 前低 ×(1−tol)（前低＝三根之前的 low_win 日最低點），
+    strict 另要求三根裡至少一根低點回到前低 ×(1+tol) 以內（真的回測過前低，不是在高處橫盤）→ 第三根當天為買點。
+    非嚴格版（每天都成立、訊號數兩倍）σ 上升，未採用。"""
+    c, lo = df["close"], df["low"]
+    deep = c / c.rolling(lookback).max() - 1 <= -dd
+    prev_low = lo.rolling(low_win).min().shift(3)
+    held = (lo.shift(2) >= prev_low * (1 - tol)) & (lo.shift(1) >= prev_low * (1 - tol)) & (lo >= prev_low * (1 - tol))
+    if strict:
+        held &= pd.concat([lo.shift(2), lo.shift(1), lo], axis=1).min(axis=1) <= prev_low * (1 + tol)
+    return (deep & held).fillna(False)
+
+
 def j1_zone_wick(df):
     """低檔區＋爆量長下影線買；高檔區＋爆量長上影線賣。"""
     low_zone, high_zone, *_ = setup_zones(df)

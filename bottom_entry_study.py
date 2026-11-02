@@ -19,7 +19,7 @@ import portfolio_study as ps
 import robust_study as rs
 import rules_research as rr
 from backtest import RESULTS
-from indicators import atr, bottom_hold, shadows, sma
+from indicators import bottom_hold, wick_hold
 from portfolio_contrib import irr
 from portfolio_electronics import CAPITAL
 from stock_fit import paired_from_files
@@ -31,15 +31,8 @@ def bottom_a(df, dd=0.15, tol=0.03, lookback=60, low_win=20, strict=False):
 
 
 def bottom_b(df, vol_k=1.0, wick_ratio=0.5, vol_win=20):
-    """B 下影線站穩。t0 長下影線、量 ≥ vol_k × vol_win 日均量；t0+1、t0+2 收盤 ≥ t0 收盤；訊號日 t0+2。"""
-    upper, lower, rng = shadows(df)
-    big_bar = rng >= 0.8 * atr(df)
-    long_lower = (lower >= wick_ratio * rng) & big_bar
-    no_shrink = df["volume"] >= vol_k * sma(df["volume"], vol_win)
-    t0 = long_lower & no_shrink
-    c = df["close"]
-    stood = (c.shift(1) >= c.shift(2)) & (c >= c.shift(2))          # t0 = 兩天前
-    return (t0.shift(2).fillna(False).astype(bool) & stood).fillna(False)
+    """B 下影線站穩（定義搬到 indicators.wick_hold；k=0.7×5 日均量版 2026-11-02 已採用進「任一」，本檔的「正式版」欄位從此已含它）。"""
+    return wick_hold(df, vol_k, vol_win, wick_ratio)
 
 
 NEW = {

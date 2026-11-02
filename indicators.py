@@ -476,6 +476,21 @@ def bottom_hold(df, dd=0.15, tol=0.03, lookback=60, low_win=20, strict=True):
     return (deep & held).fillna(False)
 
 
+def wick_hold(df, vol_k=0.8, vol_win=5, wick_ratio=0.5):
+    """下影線站穩買點（2026-11-02 使用者提案、同日採用，bottom_entry_study.py「下影線站穩」k 掃描）：
+    t0 出現長下影線（影線 ≥ K 棒全長 wick_ratio、全長 ≥ 0.8 ATR，同 wick_conditions）但不必爆量，只要沒有量縮
+    （量 ≥ vol_k × vol_win 日均量），且 t0+1、t0+2 收盤都 ≥ t0 收盤（站住）→ t0+2 當天為買點。
+    k 0.6～0.8 × 5 日均量是平台、0.9 起轉差；使用者先選平台中央 0.7、同晚改選 0.8（平台右端、報酬最好）；20 日均量版與 k ≥ 0.9 都 σ 上升較多，未採用。"""
+    upper, lower, rng = shadows(df)
+    big_bar = rng >= 0.8 * atr(df)
+    long_lower = (lower >= wick_ratio * rng) & big_bar
+    no_shrink = df["volume"] >= vol_k * sma(df["volume"], vol_win)
+    t0 = (long_lower & no_shrink).shift(2).fillna(False).astype(bool)
+    c = df["close"]
+    stood = (c.shift(1) >= c.shift(2)) & (c >= c.shift(2))
+    return (t0 & stood).fillna(False)
+
+
 def j1_zone_wick(df):
     """低檔區＋爆量長下影線買；高檔區＋爆量長上影線賣。"""
     low_zone, high_zone, *_ = setup_zones(df)

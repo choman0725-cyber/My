@@ -15,7 +15,7 @@ import pandas as pd
 
 from backtest import ROOT, WARMUP, load, RESULTS
 from final_strategy import signals
-from indicators import bollinger, bottom_hold, cross_up, kd, pv_triggers, setup_zones
+from indicators import bollinger, bottom_hold, cross_up, kd, pv_triggers, setup_zones, wick_hold
 from yield_study import forward_dividend_eps, run_multi, summary
 
 
@@ -32,6 +32,7 @@ def entries(df):
         "布林KD": touched & cross_up(k, d) & (k < 30),
         "混合（布林KD位置＋價量引線時機）": low_zone & pv_buy,
         "落底（跌深守前低）": bottom_hold(df),          # 2026-11-02 採用：距 60 日高 ≤−15%、三根 K 守住前低 ±3% 且有回測前低
+        "下影線站穩": wick_hold(df),                    # 2026-11-02 採用：長下影線不爆量但量 ≥ 0.8×5 日均量、之後兩天收盤站住
     }
     e["任一"] = pd.concat(e.values(), axis=1).fillna(False).any(axis=1)
     return e, pv_buy

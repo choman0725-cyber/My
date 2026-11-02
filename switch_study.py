@@ -8,7 +8,8 @@
      python switch_study.py v3：使用者更正版：肉用全額（百分比）比、新股多 ≥10 個百分點；實際只投入信心首買比例，且只換進信心 ≥3（首買 80%）的新股
        輸出：results/switch_v3_*.csv
      python switch_study.py v4：v3 ＋ 成長股（殖利率中位 <4%、用自己中位數買的日子）不參與換股　輸出：results/switch_v4_*.csv
-     python switch_study.py v5：v4 的「滿足點」改 10%（觸發賺 ≥10%／肉的下限 +10%／兩者）　輸出：results/switch_v5_*.csv"""
+     python switch_study.py v5：v4 的「滿足點」改 10%（觸發賺 ≥10%／肉的下限 +10%／兩者）　輸出：results/switch_v5_*.csv
+     python switch_study.py v6：v4 改賺 ≥8% 就比（另附 6%、0%）　輸出：results/switch_v6_*.csv"""
 import sys
 
 import pandas as pd
@@ -62,6 +63,14 @@ if "v5" in sys.argv:      # 2026-11-02 使用者「滿足點改為 10%」：兩�
                 "v5b 滿足點＝max(+10%, 5%殖利率)": {**dr.FINAL, "switch": {**_V4, "floor": 0.10}},
                 "v5c 兩者都改": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.10, "floor": 0.10}}}
     OUT = "switch_v5"
+if "v6" in sys.argv:      # 2026-11-02 使用者：v4 改成賺 ≥8% 就開始比（另附 6%、0% 看趨勢）
+    _V4 = {"min_gain": 0.12, "hy": 5.0, "floor": False, "money": False, "margin": 0.10, "min_frac": 0.8, "no_growth": True}
+    VARIANTS = {"正式版": dr.FINAL,
+                "v4（賺≥12%）": {**dr.FINAL, "switch": _V4},
+                "v6 賺≥8%（使用者）": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.08}},
+                "v6 賺≥6%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.06}},
+                "v6 賺≥0%": {**dr.FINAL, "switch": {**_V4, "min_gain": 0.0}}}
+    OUT = "switch_v6"
 
 
 def main():

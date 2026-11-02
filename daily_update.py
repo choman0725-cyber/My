@@ -32,6 +32,8 @@ RETRY_MIN, GIVE_UP = 10, "18:00"
 REPORTS = ROOT / "my_reports"
 ACCOUNT = ROOT / "my_account.json"
 HOLDINGS = ROOT / "my_holdings.csv"
+# 帳戶清單：(名稱, 設定檔, 預設持股檔)；設定檔不存在就略過。設定檔可用 "holdings" 指定持股檔（2026-11-02 加第二帳戶）
+ACCOUNTS = [("帳戶 A（主帳戶）", ACCOUNT, HOLDINGS), ("帳戶 B（第二帳戶）", ROOT / "my_account2.json", ROOT / "my_holdings_account2.csv")]
 PRICE_KEYS = ["open", "high", "low", "close", "volume"]
 
 
@@ -151,9 +153,10 @@ def rebuild():
          "(RESULTS/'portfolio_prepared.pkl').write_bytes(pickle.dumps(ps.prepare(sorted(cons['stock_id'].unique()),dates)))"])
 
 
-def advice():
-    acc = json.loads(ACCOUNT.read_text(encoding="utf-8"))
-    cmd = [sys.executable, "daily_run.py", "--holdings", str(HOLDINGS), "--cash", str(acc["cash"])]
+def advice(account=ACCOUNT, holdings=HOLDINGS):
+    acc = json.loads(account.read_text(encoding="utf-8"))
+    holdings = ROOT / acc["holdings"] if acc.get("holdings") else holdings
+    cmd = [sys.executable, "daily_run.py", "--holdings", str(holdings), "--cash", str(acc["cash"])]
     if acc.get("slots3"):                           # my_account.json 寫 "slots3": true → 3 檔版
         cmd.append("--slots3")
     if acc.get("monthly"):
@@ -193,8 +196,12 @@ def main():
              f"- 新進池：{', '.join(info['report']) or '無'}",
              f"- 沒有到最新一天：{', '.join(info['lag']) or '無'}", ""]
     if not a.skip_advice:
-        lines += ["```", advice().rstrip(), "```", "",
-                  "成交後請更新 my_holdings.csv（代號,進場日,股數,成本,首買價）與 my_account.json 的 cash。"]
+        for label, acc_f, hold_f in ACCOUNTS:
+            if not acc_f.exists():
+                continue
+            hold_ = ROOT / json.loads(acc_f.read_text(encoding="utf-8")).get("holdings", hold_f.name)
+            lines += [f"## {label}", "", "```", advice(acc_f, hold_f).rstrip(), "```", "",
+                      f"成交後請更新 {hold_.name}（代號,進場日,股數,成本,首買價…）與 {acc_f.name} 的 cash。", ""]
     rep.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\n已存：{rep}")

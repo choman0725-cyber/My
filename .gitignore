@@ -12,5 +12,5 @@ data/market.db.tmp
 
 # 個人實際持股（daily_run --holdings），不進 git
 my_holdings*.csv
-my_account.json
+my_account*.json
 my_reports/

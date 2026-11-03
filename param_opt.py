@@ -140,6 +140,8 @@ def to_kw(cfg):
     for k_ in ("max_hold_days", "zone_hold", "zone_buy"):
         if cfg.get(k_):
             kw[k_] = cfg[k_]              # 衛星名額持滿出場（turnover_study）
+    if cfg.get("fill_close"):
+        kw["fill_close"] = cfg["fill_close"]    # 訊號日收盤成交（fill_study）
     if cfg.get("entry_hold"):
         kw["entry_hold"] = (GROWTH_FLAGS[cfg["entry_hold"][0]], cfg["entry_hold"][1])   # 買入殖利率錨定續抱（group_yield_study entry）
     if cfg.get("stale_exit"):

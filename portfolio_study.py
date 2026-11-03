@@ -284,9 +284,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0, stale_exit=None, zone_hold=None, zone_buy=None, entry_hold=None):
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0, stale_exit=None, zone_hold=None, zone_buy=None, entry_hold=None, fill_close=None):
     """stale_exit（呆部位出清，2026-11-03 周轉研究 turnover_study）：(天數, 獲利上限)，持有超過天數、扣成本後獲利在 0～上限之間、殖利率已低於續抱門檻的部位隔天開盤賣掉，把名額與現金讓給新買點；預設 None＝關。
-    entry_hold（2026-11-03 使用者「12% 加上買入殖利率 −0.25 或買入殖利率」；group_yield_study entry）：(mask, delta)，mask={sid: bool 陣列}，
+    fill_close（2026-11-03 使用者「回測當天收盤價買比較好還是隔天開盤」；fill_study）："buy"＝首買用訊號日收盤成交（加碼、賣出仍隔天開盤）；
+      "all"＝所有買賣都用訊號日收盤成交（把 open[n] 換成 close[n−1]）；None＝正式版隔天開盤。
+        entry_hold（2026-11-03 使用者「12% 加上買入殖利率 −0.25 或買入殖利率」；group_yield_study entry）：(mask, delta)，mask={sid: bool 陣列}，
       在 mask 為真的日子買進的部位，續抱門檻改成「買進當天的預估殖利率 − delta」（記在 pos["hy_entry"]），其餘部位照 hold_yield。
         zone_buy（2026-11-03 turnover_study）：slot_split 區名的集合，這些區的遮罩本身就是「買進條件」（例如衛星名額：W 底｜帶量突破 且 殖利率 ≥3% 且 5 年賺錢），
       不必再過 data["buy"]（核心的殖利率門檻＋六種買點）；沒列的區照舊只買 data["buy"] 為真的股票。
@@ -428,6 +430,8 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
     init_positions／init_cash：從實際持股起算（daily_run --holdings）。{代號: 部位 dict（同引擎內部格式，金額以 capital 為 1）}
       與起始現金（同單位）；預設 None＝從全現金 1.0 起跑。"""
     BUY_COST, SELL_COST = _BUY_COST + slip, _SELL_COST + slip     # 滑價併入成本；函數內所有買賣都用這兩個
+    if fill_close == "all":      # 所有成交改用前一天（訊號日）收盤：複製一份資料，open 換成 close 往後移一天
+        data = {sid: {**d, "open": np.concatenate([[np.nan], np.asarray(d["close"], float)[:-1]])} for sid, d in data.items()}
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []
@@ -1062,7 +1066,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                     rest_ = invest * (1 - keep_)
                     invest -= rest_
                     pool.append({"sid": sid, "amt": rest_, "since": n, "wait": wait_, "expire": expire_, "note": "首買分批·第二批"})
-                o = data[sid]["open"][n]
+                o = data[sid]["close"][p] if fill_close == "buy" and not np.isnan(data[sid]["close"][p]) else data[sid]["open"][n]
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
                 if entry_hold and sid in entry_hold[0] and entry_hold[0][sid][p] and not np.isnan(data[sid]["yield"][p]):

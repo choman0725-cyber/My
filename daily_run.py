@@ -108,7 +108,7 @@ def main():
     global FINAL
     if a.switch18:
         FINAL = {**FINAL, **FINAL_SW18}
-        print("【備案 換股 18%】名額滿時，持股賺 ≥18%（非成長股）且信心 ≥3 新買點的預期肉多 10 個百分點以上 → 隔天換股")
+        print("【備案 換股 18%】名額滿時，持股賺 ≥18%（非長期殖利率偏低股）且信心 ≥3 新買點的預期肉多 10 個百分點以上 → 隔天換股")
     if a.slots3:
         FINAL = {**FINAL, **FINAL_3}
         print("【3 檔版】同時最多 3 檔（套牢、被剔除也佔名額）、每檔額度＝總資產 ÷ 3、首買 65%（信心 ≥3 首買 80%）")
@@ -214,7 +214,7 @@ def main():
         print(f"注意：{', '.join(stale)} 在 {last.date()} 沒有報價資料，引擎會等資料補齊後才判斷賣出／加碼。")
     print(f"執行後現金約 {cash1 * a.capital / 1e4:,.0f} 萬")
 
-    print(f"\n【觀察名單：殖利率達門檻（一般股 {thr[p]:.2f}%；成長股＝自己 3 年中位×1.25）且在成分股內、未持有（等技術買點；「近5年有虧損」的不會買）】")
+    print(f"\n【觀察名單：殖利率達門檻（一般股 {thr[p]:.2f}%；長期殖利率偏低股＝自己 3 年中位×1.25）且在成分股內、未持有（等技術買點；「近5年有虧損」的不會買）】")
     watch = []
     for sid, d in G["sub"].items():
         y = d["yield"][p]
@@ -224,7 +224,7 @@ def main():
             continue
         ok = ps.profit_years_flag(d.get("annual_eps"), dates, FINAL["profit_years"])[p] if FINAL.get("profit_years") else True
         watch.append(dict(代號=sid, 名稱=names.get(sid, ""), 收盤=d["close_ff"][p], 預估殖利率=round(y, 2),
-                          成長股="是" if growth else "", 自己中位=round(d["own_median"][p], 2) if "own_median" in d and not np.isnan(d["own_median"][p]) else None,
+                          殖利率偏低股="是" if growth else "", 自己中位=round(d["own_median"][p], 2) if "own_median" in d and not np.isnan(d["own_median"][p]) else None,
                           倍數=round(d["own_ratio"][p], 2) if "own_ratio" in d and not np.isnan(d["own_ratio"][p]) else None,
                           信心=int(d["conf_score"][p]) if "conf_score" in d else None,
                           首買=f"{d['first_frac'][p]:.0%}" if "first_frac" in d else f"{FINAL['first']:.0%}",

@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from backtest import BUY_COST, RAW_PRICES, RESULTS, ROOT, SELL_COST
+from backtest import BUY_COST as _BUY_COST, RAW_PRICES, RESULTS, ROOT, SELL_COST as _SELL_COST
 from indicators import bollinger, cross_down, kd, pv_triggers, rsi, sma
 from yield_entry_study import entries
 from yield_study import REPORT_DEADLINE
@@ -284,8 +284,9 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None):
-    """switch（換股，2026-11-02 使用者）：名額滿、又出現新買點時，比較「剩餘肉」，例如 {"min_gain": 0.10, "margin": 0.10}。
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0):
+    """slip（滑價，2026-11-03 使用者）：買進、賣出成交價各比開盤差 slip（0.003＝0.3%），當作額外成本加在手續費／證交稅上；預設 0＝與之前完全相同。
+    switch（換股，2026-11-02 使用者）：名額滿、又出現新買點時，比較「剩餘肉」，例如 {"min_gain": 0.10, "margin": 0.10}。
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
       （剩餘肉最少的持股對預期最多的新股，逐對比較）。
@@ -420,6 +421,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
       期間那些股票買到了就不再買 C；到期仍沒買到、C 的殖利率仍達門檻且在成分股，到期那天開盤買 C（首買比例用到期前一日的信心）。
     init_positions／init_cash：從實際持股起算（daily_run --holdings）。{代號: 部位 dict（同引擎內部格式，金額以 capital 為 1）}
       與起始現金（同單位）；預設 None＝從全現金 1.0 起跑。"""
+    BUY_COST, SELL_COST = _BUY_COST + slip, _SELL_COST + slip     # 滑價併入成本；函數內所有買賣都用這兩個
     mem = {k: v.values for k, v in member.items()}
     no = np.zeros(len(dates), bool)
     cash, positions, trades, equity, exposure = 1.0, {}, [], [], []

@@ -37,6 +37,11 @@ elif "tp12" in sys.argv:     # 2026-11-03 使用者「成長股出場條件也�
     for kb in (2.25, 2.5, 2.75):
         V[f"＋成長股（非偏低股）≥{kb}% 買、賺 12% 停利"] = {**rr.BASE, "growth_second": ("msci", kb, 99.0, "abs", "nonlow")}
     OUT = "group_yield_tp12"
+elif "entry" in sys.argv:    # 2026-11-03 使用者「12% 加上 買入 −0.25 或用買入的殖利率」：續抱線＝買進當天殖利率 − delta（12% 停利仍要殖利率跌破它）
+    for kb in (2.25, 2.5, 2.75):
+        for delta in (0.25, 0.0):
+            V[f"＋成長股（非偏低股）≥{kb}% 買、續抱 ≥買入殖利率−{delta}"] = {**rr.BASE, "growth_second": ("msci", kb, None, "abs", "nonlow"), "entry_hold": ("msci_nonlow", delta)}
+    OUT = "group_yield_entry"
 else:
     for k in (1.0, 1.25, 1.5):
         V[f"＋成長股 群體中位×{k}"] = {**rr.BASE, "growth_second": ("msci", k, None)}
@@ -47,6 +52,8 @@ def main():
     po.setup(); G = rs.G; dates = G["dates"]
     po.GROWTH_FLAGS["msci"] = msci_flags(G)
     F = po.GROWTH_FLAGS["msci"]
+    po.apply(rr.BASE)
+    po.GROWTH_FLAGS["msci_nonlow"] = {s_: F[s_] & ~G["sub"][s_]["growth_flag"] for s_ in G["sub"]}   # 成長股且非偏低股（entry 模式用）
     s17 = dates.get_indexer([pd.Timestamp("2017-01-03")], method="bfill")[0]
     res, money = {}, {}
     for i, (name, cfg) in enumerate(V.items()):

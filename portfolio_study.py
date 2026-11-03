@@ -284,9 +284,11 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0, stale_exit=None, zone_hold=None, zone_buy=None):
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0, stale_exit=None, zone_hold=None, zone_buy=None, entry_hold=None):
     """stale_exit（呆部位出清，2026-11-03 周轉研究 turnover_study）：(天數, 獲利上限)，持有超過天數、扣成本後獲利在 0～上限之間、殖利率已低於續抱門檻的部位隔天開盤賣掉，把名額與現金讓給新買點；預設 None＝關。
-    zone_buy（2026-11-03 turnover_study）：slot_split 區名的集合，這些區的遮罩本身就是「買進條件」（例如衛星名額：W 底｜帶量突破 且 殖利率 ≥3% 且 5 年賺錢），
+    entry_hold（2026-11-03 使用者「12% 加上買入殖利率 −0.25 或買入殖利率」；group_yield_study entry）：(mask, delta)，mask={sid: bool 陣列}，
+      在 mask 為真的日子買進的部位，續抱門檻改成「買進當天的預估殖利率 − delta」（記在 pos["hy_entry"]），其餘部位照 hold_yield。
+        zone_buy（2026-11-03 turnover_study）：slot_split 區名的集合，這些區的遮罩本身就是「買進條件」（例如衛星名額：W 底｜帶量突破 且 殖利率 ≥3% 且 5 年賺錢），
       不必再過 data["buy"]（核心的殖利率門檻＋六種買點）；沒列的區照舊只買 data["buy"] 為真的股票。
     zone_hold（2026-11-03 turnover_study）：字串＝max_hold_days 只套用在這個分區（slot_split 區名）的部位，例如衛星「撿股」名額持滿 6 個月就出、核心 5 檔不受影響；None＝全部套用。
     slip（滑價，2026-11-03 使用者）：買進、賣出成交價各比開盤差 slip（0.003＝0.3%），當作額外成本加在手續費／證交稅上；預設 0＝與之前完全相同。
@@ -807,6 +809,8 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             elif gain >= target:
                 y = d["yield"][p]
                 hy_ = d[hold_yield][p] if isinstance(hold_yield, str) else hold_yield   # 字串＝每檔每日不同的門檻陣列
+                if pos.get("hy_entry") is not None:
+                    hy_ = pos["hy_entry"]
                 keep = (hold_yield is not None and not np.isnan(y) and not np.isnan(hy_) and y >= hy_
                         and not (hold_yield_cap is not None and gain >= hold_yield_cap))
                 # 信心續抱掛鉤：data[sid]["hold_keep"]（每日布林）為 True 時，殖利率已跌破門檻也先不賣
@@ -1061,6 +1065,8 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                 o = data[sid]["open"][n]
                 positions[sid] = {"start": n, "first": o, "shares": invest * (1 - BUY_COST) / o, "cost": invest,
                                   "budget": budget, "adds": 0, "hit": 0, "low": o, "removed": False, "zone": zone}
+                if entry_hold and sid in entry_hold[0] and entry_hold[0][sid][p] and not np.isnan(data[sid]["yield"][p]):
+                    positions[sid]["hy_entry"] = float(data[sid]["yield"][p]) - entry_hold[1]
                 cash -= invest
                 log(n, sid, "買進", o, invest * (1 - BUY_COST) / o, invest, f"首買（殖利率 {data[sid]['yield'][p]:.2f}%，額度 {budget:.4f} 的 {fr:.0%}）"
                     + ("；啟動閒錢出清方案" if H["val"] > 0 else ""))

@@ -33,6 +33,10 @@ elif "abs225" in sys.argv:   # 2026-11-03 使用者「成長股用 2.25% 買／�
         V[f"＋成長股（非偏低股）≥{kb}% 買、續抱 ≥{kh}%"] = {**rr.BASE, "growth_second": ("msci", kb, kh, "abs", "nonlow")}
     V["所有成長股（含偏低股）≥2.5% 買、續抱 ≥2.25%（對照）"] = {**rr.BASE, "growth_second": ("msci", 2.5, 2.25, "abs", "all")}
     OUT = "group_yield_abs225"
+elif "tp12" in sys.argv:     # 2026-11-03 使用者「成長股出場條件也加入 12%」：買 2.25／2.5／2.75%，賺 ≥12% 就停利（不看殖利率；續抱線設 99 讓停利必成立）
+    for kb in (2.25, 2.5, 2.75):
+        V[f"＋成長股（非偏低股）≥{kb}% 買、賺 12% 停利"] = {**rr.BASE, "growth_second": ("msci", kb, 99.0, "abs", "nonlow")}
+    OUT = "group_yield_tp12"
 else:
     for k in (1.0, 1.25, 1.5):
         V[f"＋成長股 群體中位×{k}"] = {**rr.BASE, "growth_second": ("msci", k, None)}

@@ -194,6 +194,12 @@ def main():
     hold = pd.DataFrame(rows)
     with pd.option_context("display.width", 300, "display.max_columns", 30, "display.unicode.east_asian_width", True):
         print(hold.to_string(index=False) if len(hold) else "（無）")
+    if pos0:
+        import scenario_text as sc
+        print("\n【持股劇本：每檔接下來什麼情況會賣、會加碼、何時不佔名額（規則換算成價位，隔天開盤執行）】")
+        for sid, q in pos0.items():
+            print(sc.holding_script(sid, names.get(sid, ""), q, G["sub"][sid], p, dates, a.capital, FINAL,
+                                    time_add_days=FINAL.get("time_add_days", 182), time_add_amount=FINAL.get("time_add_amount", 0.20)))
 
     print(f"\n【明天（{last.date()} 之後第一個交易日）開盤要做的事】")
     acts = []
@@ -238,6 +244,15 @@ def main():
     w = pd.DataFrame(watch).sort_values("預估殖利率", ascending=False) if watch else pd.DataFrame()
     with pd.option_context("display.width", 300, "display.unicode.east_asian_width", True):
         print(w.to_string(index=False) if len(w) else "（無）")
+    if len(w):
+        import scenario_text as sc
+        print("\n【觀察名單劇本：每檔還差什麼才會出現買訊（殖利率門檻價＋六種技術買點的具體條件）】")
+        for r in w.itertuples():
+            sid = r.代號; d = G["sub"][sid]
+            df_, _ = ps.load_prices(sid); df_ = df_[df_.index <= last]
+            growth = bool(d.get("growth_flag", np.zeros(len(dates), bool))[p])
+            gate = d["own_median"][p] * FINAL["growth_rel"][0] if growth and FINAL.get("growth_rel") else thr[p]
+            print(sc.watch_script(sid, names.get(sid, ""), df_, d["yield"][p], gate, growth, d["own_median"][p] if "own_median" in d else np.nan, thr[p]))
 
 
 if __name__ == "__main__":

@@ -125,7 +125,8 @@ def one(task):
     if "cooldown" not in kw:
         kw["cooldown"] = cd
     sp = SPLITS[split]
-    extra = {"slot_split": {"0050": (sp[0], G["zone"]["0050"]), "0056": (sp[1], G["zone"]["0056"])}} if sp else {}
+    extra = ({"slot_split": sp} if isinstance(sp, dict) else      # dict＝自訂分區 {區名: (名額, {sid: bool 陣列})}（turnover_study 衛星名額）
+             {"slot_split": {"0050": (sp[0], G["zone"]["0050"]), "0056": (sp[1], G["zone"]["0056"])}} if sp else {})
     tr, eq = ps.run(G["sub"], G["member"], dates, capital=CAPITAL, contributions=contrib,
                     start_n=s_n, end_n=e_n, **kw, **extra)
     final = eq.iloc[-1] * CAPITAL

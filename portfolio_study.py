@@ -284,8 +284,12 @@ def run(data, member, dates, idle_cash=False, one_per_day=False, cooldown=0, tar
         hedge_add_timing="signal", hedge_add_cap="shortfall", hedge_add_wait=20, hedge_force=False, hedge_from="start",
         hedge_exit_cooldown=True, hedge_idle_days=0, first_split=None,
         hedge_mode="cash", hedge_trigger_exits=2, hedge_wait=5, hedge_frac=0.5, hedge_trigger_window=None, hedge_trap="stale",
-        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0):
-    """slip（滑價，2026-11-03 使用者）：買進、賣出成交價各比開盤差 slip（0.003＝0.3%），當作額外成本加在手續費／證交稅上；預設 0＝與之前完全相同。
+        topup=None, init_positions=None, init_cash=None, cand_order="yield", wait_better=None, switch=None, ind_cap=None, trend_add=None, slip=0.0, stale_exit=None, zone_hold=None, zone_buy=None):
+    """stale_exit（呆部位出清，2026-11-03 周轉研究 turnover_study）：(天數, 獲利上限)，持有超過天數、扣成本後獲利在 0～上限之間、殖利率已低於續抱門檻的部位隔天開盤賣掉，把名額與現金讓給新買點；預設 None＝關。
+    zone_buy（2026-11-03 turnover_study）：slot_split 區名的集合，這些區的遮罩本身就是「買進條件」（例如衛星名額：W 底｜帶量突破 且 殖利率 ≥3% 且 5 年賺錢），
+      不必再過 data["buy"]（核心的殖利率門檻＋六種買點）；沒列的區照舊只買 data["buy"] 為真的股票。
+    zone_hold（2026-11-03 turnover_study）：字串＝max_hold_days 只套用在這個分區（slot_split 區名）的部位，例如衛星「撿股」名額持滿 6 個月就出、核心 5 檔不受影響；None＝全部套用。
+    slip（滑價，2026-11-03 使用者）：買進、賣出成交價各比開盤差 slip（0.003＝0.3%），當作額外成本加在手續費／證交稅上；預設 0＝與之前完全相同。
     switch（換股，2026-11-02 使用者）：名額滿、又出現新買點時，比較「剩餘肉」，例如 {"min_gain": 0.10, "margin": 0.10}。
       持股（獲利 ≥ min_gain、佔名額）剩餘肉＝max(均價×(1+停利), 現價×殖利率/續抱門檻)／現價 − 1（停利與殖利率跌破 hy 都成立才賣的那個價位）；
       新股預期肉＝max(停利, 殖利率/續抱門檻 − 1)（續抱門檻用這檔當天的值，成長股是自己的中位數）。新股預期 − 持股剩餘 ≥ margin 就隔天開盤賣掉持股、空出名額給新股
@@ -769,6 +773,14 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                     close_out(sid, n, o, "殖利率<門檻＋技術賣訊")
                     sold_today.add(sid)
                     continue
+            if stale_exit and held > stale_exit[0]:
+                g_ = c_prev * (1 - SELL_COST) / (pos["cost"] / pos["shares"]) - 1
+                y_ = d["yield"][p]
+                hy_ = d[hold_yield][p] if isinstance(hold_yield, str) else hold_yield
+                if 0 <= g_ < stale_exit[1] and (hy_ is None or np.isnan(y_) or np.isnan(hy_) or y_ < hy_):
+                    close_out(sid, n, o, f"呆部位出清（持有>{stale_exit[0]}天、賺{g_:.0%}、殖利率<門檻）")
+                    sold_today.add(sid)
+                    continue
             if tranches:
                 k = pos.get("tranche", 0)
                 if k < len(tranches):
@@ -826,7 +838,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                 close_out(sid, n, o, "公司虧損出場")
                 sold_today.add(sid)
                 continue
-            if max_hold_days and held >= max_hold_days:
+            if max_hold_days and held >= max_hold_days and (zone_hold is None or pos.get("zone") == zone_hold):
                 close_out(sid, n, o, "持有滿期強制出場")
                 sold_today.add(sid)
                 continue
@@ -995,7 +1007,9 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
             else:
                 rank = lambda s_: data[s_]["yield"][p]
             cands = [((s_ in switch_to, rank(s_)), s_) for s_ in data
-                     if s_ not in positions and s_ not in sold_today and (data[s_]["buy"][p] or s_ in forced)
+                     if s_ not in positions and s_ not in sold_today
+                     and (data[s_]["buy"][p] or s_ in forced
+                          or any(zone_free[z] > 0 and s_ in slot_split[z][1] and slot_split[z][1][s_][p] for z in (zone_buy or ())))
                      and mem.get(s_, no)[p] and not np.isnan(data[s_]["open"][n])]
             picked = 0
             for _, sid in sorted(cands, reverse=True):
@@ -1015,7 +1029,7 @@ one_per_day：每天最多新買 1 檔；cooldown：新買後隔幾個交易日�
                 zone = None
                 if slot_split:
                     for z, (cap, zm) in reversed(list(slot_split.items())):
-                        if zone_free[z] > 0 and sid in zm and zm[sid][p]:
+                        if zone_free[z] > 0 and sid in zm and zm[sid][p] and (z in (zone_buy or ()) or data[sid]["buy"][p] or sid in forced):
                             zone = z
                             break
                     if zone is None:

@@ -35,6 +35,8 @@ def setup():
     if not PKL.exists():
         PKL.write_bytes(pickle.dumps(ps.prepare(sorted(cons["stock_id"].unique()), dates)))
     data, _ = pickle.loads(PKL.read_bytes())
+    n_pkl = len(next(iter(data.values()))["close"])     # 快取建好後日曆可能又多了幾天（13:35 Yahoo 暫定列）：日曆截到快取長度，不重建
+    dates = dates[:n_pkl]
     ps.attach_fundamentals(data, dates)
     zone = {e: {k: v.values for k, v in ps.membership(cons[(cons["etf"] == e) & cons["stock_id"].isin(POOL)], dates).items()} for e in ("0050", "0056")}
     member = ps.membership(cons[cons["stock_id"].isin(POOL)], dates)

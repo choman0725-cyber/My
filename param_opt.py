@@ -137,6 +137,11 @@ def to_kw(cfg):
         kw["ind_cap"] = cfg["ind_cap"]    # 同產業名額上限（ind_cap_study）
     if cfg.get("trend_add"):
         kw["trend_add"] = cfg["trend_add"]    # 多頭排列加碼（trend_add_study）
+    for k_ in ("max_hold_days", "zone_hold", "zone_buy"):
+        if cfg.get(k_):
+            kw[k_] = cfg[k_]              # 衛星名額持滿出場（turnover_study）
+    if cfg.get("stale_exit"):
+        kw["stale_exit"] = cfg["stale_exit"]    # 呆部位出清（turnover_study）
     if cfg.get("slip"):
         kw["slip"] = cfg["slip"]          # 滑價（slip_study；正式版不設＝0）
     if cfg.get("hard_cap"):               # 硬上限：套牢、被剔除的部位也佔名額，同時最多持有 max_slots 檔（slot3_study）

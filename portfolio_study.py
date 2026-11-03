@@ -1198,6 +1198,9 @@ def attach_fundamentals(data, dates):
         if len(e) >= 4:
             ttm = pd.Series(e["eps"].rolling(4).sum().values, index=e["published"]).groupby(level=0).last()
             loss = (ttm < 0).reindex(dates.union(ttm.index)).ffill().reindex(dates).fillna(False).astype(bool).values
+            d["eps_ttm"] = ttm.reindex(dates.union(ttm.index)).ffill().reindex(dates).values     # 近四季 EPS 合計（已公布日起沿用；eps_growth_study 用）
+        else:
+            d["eps_ttm"] = np.full(len(dates), np.nan)
         d["eps_loss"] = loss
         annual = e.groupby("fy")["eps"].agg(["sum", "size"]) if len(e) else pd.DataFrame(columns=["sum", "size"])
         d["annual_eps"] = annual[annual["size"] == 4]["sum"]      # 完整四季的年度 EPS（fy → 合計），profit_years_flag 用

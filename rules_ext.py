@@ -28,7 +28,7 @@ def own_median(yield_arr, dates, window=750, min_obs=250, stat="median"):
 MIN_MED = 0.5     # 自己的中位數至少 0.5%，才用相對規則（虧損年殖利率為 0 的股票中位數會趨近 0，倍數沒有意義）
 
 
-def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750, flag=None, mode="replace", group=None, second=None):
+def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750, flag=None, mode="replace", group=None, second=None, pullback=None):
     """回傳 {sid: (buy 陣列, 續抱門檻陣列, 成長股旗標, 倍數, 自己中位)}。
     sub：{sid: 引擎資料 dict}；sigmap：{sid: 技術買點任一陣列}；prof：{sid: 5 年賺錢旗標}；base_buy：{sid: 正式版買點}。
     成長股＝自己 window 日殖利率中位數在 [MIN_MED, gmed) 之間。
@@ -39,7 +39,11 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
       偏低股改用「殖利率 ≥ 群體中位 × k_buy」買、「≥ 群體中位 × k_hold」續抱（k_hold=None＝維持自己中位）；取代每檔自己的 ×k。
     second（2026-11-03 使用者更正：「偏低股照原規則；成長股改用所有成長股殖利率中值 ×K」）：(flag, k_buy, k_hold)。
       flag={sid: bool}＝成長股判定（MSCI 近似版）。偏低股照舊；**不是偏低股但是成長股**的，改用「殖利率 ≥ 當天所有成長股殖利率中位 × k_buy」買、
-      「≥ 該中位 × k_hold」續抱（k_hold=None＝一般續抱門檻）；其餘股票照一般門檻。"""
+      「≥ 該中位 × k_hold」續抱（k_hold=None＝一般續抱門檻）；其餘股票照一般門檻。
+    pullback（2026-11-03 使用者「已經漲了但回撤了，應該能被找出來相對便宜」；pullback_study）：(N, k_buy, k_hold, low)。
+      不是偏低股、但近 N 日殖利率最低值 < low（＝最近曾被市場用低殖利率定價：已重新評價的股票）的，加一條買法：
+      「殖利率 ≥ 近 N 日最低殖利率 × k_buy」（股利不變時＝股價從估值最貴點回撤 1−1/k_buy），續抱改「≥ 近 N 日最低 × k_hold」。
+      原本的一般門檻買法仍保留（聯集）。"""
     out = {}
     for sid, d in sub.items():
         ratio, med = own_median(d["yield"], dates, window)
@@ -70,7 +74,8 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
         basis = second[3] if len(second) > 3 else "group"     # "group"＝群體中位 ×k；"abs"＝固定殖利率 k%（2026-11-03 使用者「1.5%／2%／2.5%」）
         scope = second[4] if len(second) > 4 else "nonlow"    # "nonlow"＝只套用在不是偏低股的成長股；"all"＝所有成長股（偏低股也改）
         f2 = {s_: np.asarray(sflag.get(s_, np.zeros(len(dates), bool)), bool) for s_ in sub}
-        if basis == "abs":
+        payout = second[5] if len(second) > 5 else 0.5       # basis "eps"：殖利率改用「近四季 EPS × payout ÷ 收盤」（2026-11-03 使用者「預測 EPS×0.5」）
+        if basis in ("abs", "eps"):
             gm2 = np.ones(len(dates))
         else:
             Y = np.array([np.where(f2[s_], sub[s_]["yield"], np.nan) for s_ in sub])
@@ -79,12 +84,32 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
         for sid, d in sub.items():
             buy, hy, growth, ratio, med = out[sid]
             y = d["yield"]
+            if basis == "eps":
+                with np.errstate(all="ignore"):
+                    y = 100.0 * payout * np.asarray(d["eps_ttm"], float) / np.asarray(d["close_ff"], float)
+                y = np.where(np.isnan(y), np.nan, y)
             only2 = f2[sid] if scope == "all" else (f2[sid] & ~growth)
             rel2 = sigmap[sid] & (np.nan_to_num(y / gm2, nan=0) >= kb) & prof[sid]
             buy = np.where(only2, rel2, buy)
             if kh is not None:
-                hy = np.where(only2, gm2 * kh, hy)
+                if basis == "eps":      # 引擎用「預估殖利率 ≥ hy」判續抱，換算成等價門檻：EPS 殖利率 ≥ kh ⇔ 預估殖利率 ≥ kh × 預估殖利率 ÷ EPS 殖利率
+                    with np.errstate(all="ignore"):
+                        hy = np.where(only2, kh * np.asarray(d["yield"], float) / y, hy)
+                else:
+                    hy = np.where(only2, gm2 * kh, hy)
             out[sid] = (buy, hy, growth | only2, np.where(only2, y / gm2, ratio), np.where(only2, gm2, med))
+    if pullback:
+        N, kb, kh, low = pullback
+        for sid, d in sub.items():
+            buy, hy, growth, ratio, med = out[sid]
+            y = d["yield"]
+            ymin = pd.Series(y).rolling(N, min_periods=max(N // 2, 20)).min().shift(1).values     # 用到前一天為止
+            rerated = ~growth & (np.nan_to_num(ymin, nan=99) < low)
+            rel = sigmap[sid] & (np.nan_to_num(y / ymin, nan=0) >= kb) & prof[sid]
+            buy = np.where(rerated, buy | rel, buy)
+            if kh is not None:
+                hy = np.where(rerated, ymin * kh, hy)
+            out[sid] = (buy, hy, growth, np.where(rerated, y / ymin, ratio), np.where(rerated, ymin, med))
     return out
 
 

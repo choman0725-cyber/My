@@ -28,12 +28,18 @@ def own_median(yield_arr, dates, window=750, min_obs=250, stat="median"):
 MIN_MED = 0.5     # 自己的中位數至少 0.5%，才用相對規則（虧損年殖利率為 0 的股票中位數會趨近 0，倍數沒有意義）
 
 
-def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750, flag=None, mode="replace"):
+def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750, flag=None, mode="replace", group=None, second=None):
     """回傳 {sid: (buy 陣列, 續抱門檻陣列, 成長股旗標, 倍數, 自己中位)}。
     sub：{sid: 引擎資料 dict}；sigmap：{sid: 技術買點任一陣列}；prof：{sid: 5 年賺錢旗標}；base_buy：{sid: 正式版買點}。
     成長股＝自己 window 日殖利率中位數在 [MIN_MED, gmed) 之間。
     flag（2026-11-03 msci_growth_study）：{sid: bool 陣列} 外部成長股判定（MSCI 近似版）；mode "replace"＝取代殖利率中位數定義、
-    "and"＝兩者都要、"or"＝任一；三種都仍要求中位數 ≥ MIN_MED（倍數才有意義）。"""
+    "and"＝兩者都要、"or"＝任一；三種都仍要求中位數 ≥ MIN_MED（倍數才有意義）。
+    group（2026-11-03 使用者「改用所有成長股平均殖利率中值 ×K」；group_yield_study）：(基準, k_buy, k_hold)。
+      基準 "today"＝每天所有長期殖利率偏低股「當天預估殖利率」的橫斷面中位數；"median"＝它們「自己 750 日中位數」的橫斷面中位數。
+      偏低股改用「殖利率 ≥ 群體中位 × k_buy」買、「≥ 群體中位 × k_hold」續抱（k_hold=None＝維持自己中位）；取代每檔自己的 ×k。
+    second（2026-11-03 使用者更正：「偏低股照原規則；成長股改用所有成長股殖利率中值 ×K」）：(flag, k_buy, k_hold)。
+      flag={sid: bool}＝成長股判定（MSCI 近似版）。偏低股照舊；**不是偏低股但是成長股**的，改用「殖利率 ≥ 當天所有成長股殖利率中位 × k_buy」買、
+      「≥ 該中位 × k_hold」續抱（k_hold=None＝一般續抱門檻）；其餘股票照一般門檻。"""
     out = {}
     for sid, d in sub.items():
         ratio, med = own_median(d["yield"], dates, window)
@@ -46,6 +52,34 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
         buy = np.where(growth, rel_buy, base_buy[sid])
         hy = np.where(growth, med, hold_const)
         out[sid] = (buy, hy, growth, ratio, med)
+    if group:
+        basis, kb, kh = group
+        Y = np.array([np.where(out[s_][2], sub[s_]["yield"] if basis == "today" else out[s_][4], np.nan) for s_ in out])
+        with np.errstate(all="ignore"):
+            gm = np.nanmedian(Y, axis=0)        # 每天偏低股群體的中位數（沒有偏低股的日子為 NaN → 不買）
+        for sid, d in sub.items():
+            buy, hy, growth, ratio, med = out[sid]
+            y = d["yield"]
+            rel_buy = sigmap[sid] & (np.nan_to_num(y / gm, nan=0) >= kb) & prof[sid]
+            buy = np.where(growth, rel_buy, base_buy[sid])
+            if kh is not None:
+                hy = np.where(growth, gm * kh, hold_const)
+            out[sid] = (buy, hy, growth, np.where(growth, y / gm, ratio), med)
+    if second:
+        sflag, kb, kh = second
+        f2 = {s_: np.asarray(sflag.get(s_, np.zeros(len(dates), bool)), bool) for s_ in sub}
+        Y = np.array([np.where(f2[s_], sub[s_]["yield"], np.nan) for s_ in sub])
+        with np.errstate(all="ignore"):
+            gm2 = np.nanmedian(Y, axis=0)        # 每天所有成長股的殖利率中位數
+        for sid, d in sub.items():
+            buy, hy, growth, ratio, med = out[sid]
+            y = d["yield"]
+            only2 = f2[sid] & ~growth
+            rel2 = sigmap[sid] & (np.nan_to_num(y / gm2, nan=0) >= kb) & prof[sid]
+            buy = np.where(only2, rel2, buy)
+            if kh is not None:
+                hy = np.where(only2, gm2 * kh, hy)
+            out[sid] = (buy, hy, growth | only2, np.where(only2, y / gm2, ratio), np.where(only2, gm2, med))
     return out
 
 

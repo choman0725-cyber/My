@@ -66,15 +66,20 @@ def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed
                 hy = np.where(growth, gm * kh, hold_const)
             out[sid] = (buy, hy, growth, np.where(growth, y / gm, ratio), med)
     if second:
-        sflag, kb, kh = second
+        sflag, kb, kh = second[:3]
+        basis = second[3] if len(second) > 3 else "group"     # "group"＝群體中位 ×k；"abs"＝固定殖利率 k%（2026-11-03 使用者「1.5%／2%／2.5%」）
+        scope = second[4] if len(second) > 4 else "nonlow"    # "nonlow"＝只套用在不是偏低股的成長股；"all"＝所有成長股（偏低股也改）
         f2 = {s_: np.asarray(sflag.get(s_, np.zeros(len(dates), bool)), bool) for s_ in sub}
-        Y = np.array([np.where(f2[s_], sub[s_]["yield"], np.nan) for s_ in sub])
-        with np.errstate(all="ignore"):
-            gm2 = np.nanmedian(Y, axis=0)        # 每天所有成長股的殖利率中位數
+        if basis == "abs":
+            gm2 = np.ones(len(dates))
+        else:
+            Y = np.array([np.where(f2[s_], sub[s_]["yield"], np.nan) for s_ in sub])
+            with np.errstate(all="ignore"):
+                gm2 = np.nanmedian(Y, axis=0)        # 每天所有成長股的殖利率中位數
         for sid, d in sub.items():
             buy, hy, growth, ratio, med = out[sid]
             y = d["yield"]
-            only2 = f2[sid] & ~growth
+            only2 = f2[sid] if scope == "all" else (f2[sid] & ~growth)
             rel2 = sigmap[sid] & (np.nan_to_num(y / gm2, nan=0) >= kb) & prof[sid]
             buy = np.where(only2, rel2, buy)
             if kh is not None:

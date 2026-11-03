@@ -217,7 +217,7 @@ def apply(cfg):
             gf = cfg.get("growth_flag")        # (名稱, mode)：外部成長股判定，名稱對應 GROWTH_FLAGS（msci_growth_study）
             res = rules_ext.growth_relative(G["sub"], sig, G["dates"], prof, base, float(cfg["hold_yield"] or 0), gk, gmed, gwin,
                                             flag=GROWTH_FLAGS[gf[0]] if gf else None, mode=gf[1] if gf else "replace", group=cfg.get("growth_group"),
-                                            second=(GROWTH_FLAGS[cfg["growth_second"][0]], cfg["growth_second"][1], cfg["growth_second"][2]) if cfg.get("growth_second") else None)
+                                            second=(GROWTH_FLAGS[cfg["growth_second"][0]], *cfg["growth_second"][1:]) if cfg.get("growth_second") else None)
             for sid, (buy, hyr, growth, ratio, med) in res.items():
                 d = G["sub"][sid]
                 d["buy"], d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = buy, hyr, growth, ratio, med

@@ -171,9 +171,14 @@ def main():
         d = G["sub"][sid]; px = d["close_ff"][p]; avg = q["cost"] / q["shares"]
         gain = px / avg - 1; y = d["yield"][p]
         status = []
+        hy_ = d["hy_rel"][p] if "hy_rel" in d else FINAL["hold_yield"]          # 這檔今天的續抱門檻（偏低股＝自己中位，其餘 4.75%）
         if gain >= FINAL["target"]:
-            hy_ = d["hy_rel"][p] if "hy_rel" in d else FINAL["hold_yield"]
             status.append(f"已達 12%，等殖利率 < {hy_:.2f}%" if (not np.isnan(y) and not np.isnan(hy_) and y >= hy_) else "達賣出條件")
+        elif gain >= FINAL["target"] - 0.03 and not np.isnan(y) and not np.isnan(hy_) and y < hy_ + 0.3:
+            status.append("接近賣點")       # 2026-11-03 使用者：損益離 12% 不到 3 點、殖利率離續抱線不到 0.3
+        # 賣出要兩個條件同時成立：停利價＝平均成本×1.12；續抱線價＝殖利率剛好跌到門檻的價位（股利不變時）
+        tp_price = round(avg * (1 + FINAL["target"]), 1)
+        hy_price = round(px * y / hy_, 1) if (not np.isnan(y) and not np.isnan(hy_) and hy_ > 0) else None
         if q["removed"] or not G["member"][sid].iloc[p]:
             status.append("已移出成分股")
         held = (last - dates[q["start"]]).days
@@ -184,7 +189,8 @@ def main():
         rows.append(dict(代號=sid, 名稱=names.get(sid, ""), 進場=dates[q["start"]].date(), 持有日=held, 股數=round(q["shares"] * a.capital),
                          平均成本=round(avg, 1), 現價=px, 損益pct=round(100 * gain, 1), 市值萬=round(q["shares"] * px * a.capital / 1e4, 1),
                          預估殖利率=None if np.isnan(y) else round(y, 2), 已加碼=q["adds"], 定期加碼=q.get("time_adds", 0), 補足=q.get("topups", 0),
-                         首買價=round(q["first"], 1), 距首買pct=round(100 * (px / q["first"] - 1), 1), 狀態="；".join(status)))
+                         首買價=round(q["first"], 1), 距首買pct=round(100 * (px / q["first"] - 1), 1),
+                         停利價=tp_price, 續抱線=None if np.isnan(hy_) else round(hy_, 2), 續抱線價=hy_price, 狀態="；".join(status)))
     hold = pd.DataFrame(rows)
     with pd.option_context("display.width", 300, "display.max_columns", 30, "display.unicode.east_asian_width", True):
         print(hold.to_string(index=False) if len(hold) else "（無）")

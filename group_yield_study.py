@@ -28,6 +28,11 @@ if "abs" in sys.argv:      # 2026-11-03 使用者「成長股全部判定 1.5%�
     V["所有成長股（含偏低股）殖利率≥2%"] = {**rr.BASE, "growth_second": ("msci", 2.0, None, "abs", "all")}
     V["所有成長股（含偏低股）殖利率≥2.5%"] = {**rr.BASE, "growth_second": ("msci", 2.5, None, "abs", "all")}
     OUT = "group_yield_abs"
+elif "abs225" in sys.argv:   # 2026-11-03 使用者「成長股用 2.25% 買／續抱 2%、2.5／2.25、2.75／2.5，不考慮 PE」（偏低股照舊）
+    for kb, kh in ((2.25, 2.0), (2.5, 2.25), (2.75, 2.5)):
+        V[f"＋成長股（非偏低股）≥{kb}% 買、續抱 ≥{kh}%"] = {**rr.BASE, "growth_second": ("msci", kb, kh, "abs", "nonlow")}
+    V["所有成長股（含偏低股）≥2.5% 買、續抱 ≥2.25%（對照）"] = {**rr.BASE, "growth_second": ("msci", 2.5, 2.25, "abs", "all")}
+    OUT = "group_yield_abs225"
 else:
     for k in (1.0, 1.25, 1.5):
         V[f"＋成長股 群體中位×{k}"] = {**rr.BASE, "growth_second": ("msci", k, None)}

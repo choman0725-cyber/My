@@ -150,6 +150,7 @@ def to_kw(cfg):
     return kw
 
 
+GROWTH_FLAGS = {}     # {名稱: {sid: bool 陣列}}：外部成長股判定（msci_growth_study 登記）
 _applied = {}
 _mk = {}
 _conf = {}
@@ -188,7 +189,7 @@ def apply(cfg):
     ps.ADDS, ps.ADD_STEPS = ADD_SCHEMES[cfg["adds"]]
     ps.STALE_DAYS, ps.STALE_LOSS = cfg["stale_days"], cfg["stale_loss"]
     k = (cfg["min_yield"], cfg["entry"], str(cfg.get("mkt")), cfg.get("profit_years"), str(cfg.get("growth_rel")),
-         str(cfg.get("conf_first")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg.get("gen_rel_stat"), cfg.get("gen_add"), cfg.get("growth_add"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
+         str(cfg.get("conf_first")), str(cfg.get("growth_flag")), cfg.get("conf_vw"), cfg.get("gen_rel"), cfg.get("gen_rel_win"), cfg.get("gen_rel_stat"), cfg.get("gen_add"), cfg.get("growth_add"), cfg["first"], cfg.get("hold_yield"), len(G["dates"]))
     if _applied.get("buy") != k:
         sig = G["sig"][ENTRIES[cfg["entry"]]]
         thr = buy_threshold(cfg)
@@ -213,7 +214,9 @@ def apply(cfg):
             import rules_ext
             gk, gmed, gwin = cfg["growth_rel"]
             base = {sid: d["buy"] for sid, d in G["sub"].items()}
-            res = rules_ext.growth_relative(G["sub"], sig, G["dates"], prof, base, float(cfg["hold_yield"] or 0), gk, gmed, gwin)
+            gf = cfg.get("growth_flag")        # (名稱, mode)：外部成長股判定，名稱對應 GROWTH_FLAGS（msci_growth_study）
+            res = rules_ext.growth_relative(G["sub"], sig, G["dates"], prof, base, float(cfg["hold_yield"] or 0), gk, gmed, gwin,
+                                            flag=GROWTH_FLAGS[gf[0]] if gf else None, mode=gf[1] if gf else "replace")
             for sid, (buy, hyr, growth, ratio, med) in res.items():
                 d = G["sub"][sid]
                 d["buy"], d["hy_rel"], d["growth_flag"], d["own_ratio"], d["own_median"] = buy, hyr, growth, ratio, med

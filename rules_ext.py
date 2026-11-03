@@ -28,15 +28,20 @@ def own_median(yield_arr, dates, window=750, min_obs=250, stat="median"):
 MIN_MED = 0.5     # 自己的中位數至少 0.5%，才用相對規則（虧損年殖利率為 0 的股票中位數會趨近 0，倍數沒有意義）
 
 
-def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750):
+def growth_relative(sub, sigmap, dates, prof, base_buy, hold_const, k=1.25, gmed=4.0, window=750, flag=None, mode="replace"):
     """回傳 {sid: (buy 陣列, 續抱門檻陣列, 成長股旗標, 倍數, 自己中位)}。
     sub：{sid: 引擎資料 dict}；sigmap：{sid: 技術買點任一陣列}；prof：{sid: 5 年賺錢旗標}；base_buy：{sid: 正式版買點}。
-    成長股＝自己 window 日殖利率中位數在 [MIN_MED, gmed) 之間。"""
+    成長股＝自己 window 日殖利率中位數在 [MIN_MED, gmed) 之間。
+    flag（2026-11-03 msci_growth_study）：{sid: bool 陣列} 外部成長股判定（MSCI 近似版）；mode "replace"＝取代殖利率中位數定義、
+    "and"＝兩者都要、"or"＝任一；三種都仍要求中位數 ≥ MIN_MED（倍數才有意義）。"""
     out = {}
     for sid, d in sub.items():
         ratio, med = own_median(d["yield"], dates, window)
         m_ = np.nan_to_num(med, nan=99)
         growth = (m_ < gmed) & (m_ >= MIN_MED)
+        if flag is not None:
+            f_ = np.asarray(flag.get(sid, np.zeros(len(dates), bool)), bool)
+            growth = {"replace": f_, "and": growth & f_, "or": growth | f_}[mode] & (m_ >= MIN_MED)
         rel_buy = sigmap[sid] & (np.nan_to_num(ratio, nan=0) >= k) & prof[sid]
         buy = np.where(growth, rel_buy, base_buy[sid])
         hy = np.where(growth, med, hold_const)

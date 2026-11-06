@@ -22,6 +22,7 @@ Windows 排程 22:30 run_chips.ps1 跑 --update --report 補當天並把報告�
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -39,6 +40,7 @@ TW = timezone(timedelta(hours=8))
 MARK_S, MARK_E = "<!-- chips start -->", "<!-- chips end -->"
 OVERLAP_DAYS = 10          # 增量抓時往前多抓幾天，重疊的以新資料為準（FinMind 會事後修正）
 WAIT_LIMIT, MAX_WAIT = 300, 3600
+BLUE_IDS = ("0050", "0051")
 
 
 def today_tw():
@@ -137,7 +139,12 @@ def update(token, today=None, ids=None):
         n = _merge(path, new, keys)
         if n:
             log.append(f"{ds.replace('TaiwanStock', '')} {sid or 'ALL'} +{n} 日")
-    print(f"籌碼更新：FinMind 請求 {fm.calls} 次；{len(log)} 個檔有新日子", flush=True)
+    # 0050／0051 不在 daily_update 的名單，落底規則的「績優股跌深」要用（2026-11-06 發現停在 10-30，報表 −9.9% 是舊的）。
+    # 走 update_universe_finmind 整檔重抓（每檔 7 次），還原價才會含除息、分割。
+    stale = [s for s in BLUE_IDS if _last_date(ROOT / "data" / "universe" / "prices" / f"{s}.csv") != _last_date(ROOT / "data" / "TAIEX.csv")]
+    if stale:
+        subprocess.run([sys.executable, "update_universe_finmind.py", "--only", *stale, "--skip-taiex"], cwd=ROOT, check=True)
+    print(f"籌碼更新：FinMind 請求 {fm.calls} 次；{len(log)} 個檔有新日子；重抓 {', '.join(stale) or '無'}", flush=True)
     return dict(calls=fm.calls, log=log)
 
 
@@ -181,7 +188,11 @@ def bottom_rule_status():
     """MARKET_BOTTOM_STUDY 四條件今天各自成立否（market_bottom_study.rule 的拆解）。"""
     try:
         import market_bottom_study as mbs
-        t = mbs.load(); f = mbs.features(t)
+        t = mbs.load()
+        # mbs.load 經由資料庫讀 0050 且 ffill 5 天：資料庫沒重建時舊價會被當成今天。這裡直接讀 csv，還原價算跌幅。
+        px0050 = pd.read_csv(ROOT / "data" / "universe" / "prices" / "0050.csv", parse_dates=["date"]).set_index("date")["adj_close"]
+        t["p0050"] = px0050.reindex(t.index).ffill(limit=1)
+        f = mbs.features(t)
         _, bdd, _ = mbs.blue(t, f, "0050")
         mg = t["margin"]
         ma = mg.rolling(20).mean() / mg.rolling(240).mean() - 1
@@ -194,12 +205,16 @@ def bottom_rule_status():
         c3 = bool(p60.iloc[i])
         c4 = bool(f["near_low60"].iloc[i] <= 0.12)
         ok = lambda b: "✅" if b else "—"  # noqa: E731
+        d = f.index[i]
+        lag = [n for n, x in (("0050", px0050), ("成交金額", t["money"]), ("融資", mg.where(mg.diff() != 0))) if x.dropna().index[-1] < d]
+        pool = bool(mbs.pool_rule(t, f).iloc[i])
         L = [f"**大盤落底規則（MARKET_BOTTOM_STUDY，{f.index[i]:%Y-%m-%d}）：{'四條件全部成立 → 訊號' if all([c1, c2, c3, c4]) else '未成立'}**", "",
              "| 條件 | 今天 | 門檻 | 成立 |", "|---|---|---|---|",
              f"| 融資大減 | 離一年高 {_fmt(f['m_hi'].iloc[i] * 100, 1, pct=True, sign=True)}；20 日均÷240 日均 {_fmt(ma.iloc[i] * 100, 1, pct=True, sign=True)} | ≤ −30% 或 ≤ −8% | {ok(c1)} |",
              f"| 0050 跌深 | 離一年高 {_fmt(bdd.iloc[i] * 100, 1, pct=True, sign=True)} | ≤ −20% | {ok(c2)} |",
              f"| 近 60 日放量下跌 | 最近一次 {last_panic.date() if last_panic is not None else '—'} | 跌 ≥1.5% 且額 ≥60 日均 1.3 倍 | {ok(c3)} |",
-             f"| 離 60 日低點 | {_fmt(f['near_low60'].iloc[i] * 100, 1, pct=True, sign=True)} | ≤ 12% | {ok(c4)} |", ""]
+             f"| 離 60 日低點 | {_fmt(f['near_low60'].iloc[i] * 100, 1, pct=True, sign=True)} | ≤ 12% | {ok(c4)} |", "",
+             f"股票池止跌版（第二條規則）：{'成立' if pool else '未成立'}。" + (f" **注意：{'、'.join(lag)} 還沒有 {d:%m-%d} 的資料，上表該列是舊值。**" if lag else ""), ""]
         return L
     except Exception as e:  # noqa: BLE001
         return [f"（落底規則狀態算不出來：{e}）", ""]

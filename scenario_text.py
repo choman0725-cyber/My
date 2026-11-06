@@ -45,7 +45,7 @@ def holding_script(sid, name, q, d, p, dates, capital, final, steps=(-0.15, -0.3
     for i, (st, amt) in enumerate(zip(steps, adds)):
         if q["adds"] > i:
             continue
-        hit = q.get("hit", 0) > i or q.get("low", px) <= lv[i]
+        hit = q.get("hit", 0) > i          # 引擎只看收盤價跌破（portfolio_study：c_prev / first - 1 <= step），盤中碰到不算
         if hit or _near(px, lv[i]):
             L.append(f"  跌深加碼{'①②'[i]}：**{'已跌到' if hit else '接近'}** {_fmt(lv[i])}（首買 {st:+.0%}），{'接下來' if hit else '跌到後'}出現{sig_txt}且收盤 < {_fmt(q['first'])} → 隔天開盤加碼約 {budget * amt / 1e4:,.0f} 萬")
             shown = True

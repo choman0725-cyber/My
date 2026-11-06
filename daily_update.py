@@ -2,8 +2,11 @@
 
 名單＝股票池（portfolio_electronics.ELECTRONICS）∪ 當天 0050／0056 成分股（市場殖利率中位數要用）＋ TAIEX。
   1. 沒有日線檔的（新進池）→ update_universe_finmind.py --only 整段抓。
-  2. 每檔抓最近 LOOKBACK_DAYS 天日線：與現有檔重疊的日子逐日比對 OHLCV，不一致（FinMind 改了資料）→ 整段重抓那一檔；
+  2. 每檔抓最近 LOOKBACK_DAYS 天日線：與現有檔重疊的日子逐日比對 OHLCV。
      一致 → 接上新的日子（新日子之後還沒有除權息，adj_close＝close）。
+     不一致但只在最後 PATCH_DAYS 個重疊日、且那幾天 adj_close＝close（之後沒有除權息）→ 只把那幾天換成 FinMind 新值
+     （2026-11-06：FinMind 常在隔天把前一天成交量補上鉅額／零股，之前這種情況也整檔重抓，14 檔就把每小時額度吃光）；
+     更早的日子有差、或交易日不同 → 整段重抓那一檔（FinMind 真的改了歷史資料）。
   3. 除權息結果、減資、面額分割：新的日子裡有事件 → 整段重抓那一檔（還原價、股數事件都要重算）。
   4. 財報 EPS、股利政策：抓最近 FUND_DAYS 天，合併進 eps_all.csv、dividend_all.csv。
   5. TAIEX 接上新的日子；build_db.py；重建 results/portfolio_prepared.pkl、param_opt_sigs.pkl；
@@ -34,6 +37,7 @@ import update_universe_finmind as uf
 
 ROOT = uf.ROOT
 LOOKBACK_DAYS, FUND_DAYS = 14, 400
+PATCH_DAYS = 3                                     # 重疊日差異只在最後幾個交易日 → 只換那幾天，不整檔重抓
 RETRY_MIN, GIVE_UP = 10, "18:00"
 YAHOO_GIVE_UP = "15:00"
 TW = timezone(timedelta(hours=8))                  # 一律用台北時間（電腦時區設錯也不會抓錯日期／重試截止時間）
@@ -84,7 +88,7 @@ def update(fm, today):
         return None
     new_days = set(tai_add["date"])
     split_all = fm.get("TaiwanStockSplitPrice", "", uf.SPLIT_START, today, optional=True)
-    full, appended, verify_fail, events, report = [], {}, [], [], []
+    full, appended, verify_fail, events, report, patched = [], {}, [], [], [], []
     eps_new, div_new, res_new = [], [], []
     for sid in ids:
         path = uf.PRICES / f"{sid}.csv"
@@ -113,9 +117,25 @@ def update(fm, today):
         o = old.assign(date=old_d).set_index("date")[PRICE_KEYS]
         n = new.set_index("date")[PRICE_KEYS]
         j = o.join(n, how="inner", rsuffix="_n")
-        bad = [c for c in PRICE_KEYS if (j[c].astype(float) - j[f"{c}_n"].astype(float)).abs().max() > 1e-6] if len(j) else ["無重疊日"]
+        diff = pd.Series(False, index=j.index)
+        for c in PRICE_KEYS:
+            diff |= (j[c].astype(float) - j[f"{c}_n"].astype(float)).abs() > 1e-6
+        bad = [c for c in PRICE_KEYS if ((j[c].astype(float) - j[f"{c}_n"].astype(float)).abs() > 1e-6).any()] if len(j) else ["無重疊日"]
         if set(o.index[o.index >= pd.Timestamp(start)]) != set(n.index[n.index <= last]):
             bad.append("交易日不同")
+        fix_days = list(j.index[diff]) if len(j) else []
+        tail_days = list(o.index[-PATCH_DAYS:])
+        old_adj_ok = bool((old.loc[old_d.isin(fix_days), "adj_close"].astype(float) - old.loc[old_d.isin(fix_days), "close"].astype(float)).abs().max() <= 1e-6) if fix_days else True
+        if bad and "交易日不同" not in bad and fix_days and all(d in tail_days for d in fix_days) and old_adj_ok:
+            # 差異只在最後幾個交易日、且這幾天還原價＝收盤價（之後沒有事件）→ 只換那幾天
+            keep = old[~old_d.isin(fix_days)]
+            repl = uf.build_prices(new[new["date"].isin(fix_days)], [])
+            old = pd.concat([keep, repl], ignore_index=True).sort_values("date").reset_index(drop=True)
+            old_d = pd.to_datetime(old["date"])
+            what = "、".join(f"{d:%m-%d} {'/'.join(c for c in PRICE_KEYS if abs(float(j.loc[d, c]) - float(j.loc[d, f'{c}_n'])) > 1e-6)}" for d in fix_days)
+            patched.append(f"{sid}（{what}）")
+            old.to_csv(path, index=False, lineterminator="\n")
+            bad = []
         if bad:
             full.append(sid); verify_fail.append(f"{sid}（{'、'.join(bad)}）"); continue
         add = new[new["date"] > last]
@@ -137,7 +157,7 @@ def update(fm, today):
     # manifest：只更新本次接上新日子的代號（整段重抓的由 update_universe_finmind 自己寫）
     mp = uf.UNI / "prices_manifest.csv"
     man = pd.read_csv(mp, dtype=str).set_index("stock_id")
-    for sid in appended:
+    for sid in list(appended) + [x.split("（")[0] for x in patched]:
         p = uf.PRICES / f"{sid}.csv"
         dd = pd.read_csv(p, usecols=["date"])["date"]
         if sid in man.index:
@@ -150,7 +170,7 @@ def update(fm, today):
             if start <= last_ < max(new_days).strftime("%Y-%m-%d"):
                 lag.append(s)
     return dict(new_days=sorted(d.strftime("%Y-%m-%d") for d in new_days), n=len(ids), appended=len(appended), full=full,
-                verify_fail=verify_fail, events=events, report=report, lag=lag, calls=fm.calls)
+                verify_fail=verify_fail, events=events, report=report, patched=patched, lag=lag, calls=fm.calls)
 
 
 def rebuild():
@@ -288,7 +308,7 @@ def info_from_files(today):
     start = (pd.Timestamp(today) - pd.Timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     last = {s: pd.read_csv(uf.PRICES / f"{s}.csv", usecols=["date"])["date"].iloc[-1] for s in ids if (uf.PRICES / f"{s}.csv").exists()}
     return dict(new_days=[tai_last], n=len(ids), appended=sum(1 for v in last.values() if v == tai_last), full=[],
-                verify_fail=["（--no-fetch，本次未抓，見上一次執行）"], events=["（同左）"], report=["（同左）"],
+                verify_fail=["（--no-fetch，本次未抓，見上一次執行）"], events=["（同左）"], report=["（同左）"], patched=["（同左）"],
                 lag=[s for s, v in last.items() if start <= v < tai_last], calls=0)
 
 
@@ -325,8 +345,10 @@ def main():
     token = os.environ.get("FINMIND_TOKEN")
     if not token and not a.no_fetch:
         raise SystemExit("沒有 FINMIND_TOKEN")
+    attempt = 0
     while not a.no_fetch:
-        fm = uf.FinMind(token, refresh=True)        # 重試時不能讀到「資料還沒出來」那次的快取
+        fm = uf.FinMind(token, refresh=attempt > 0) # 第一次可用今天的快取（同一天中斷重跑不必再花額度）；重試時不能讀到「資料還沒出來」那次的快取
+        attempt += 1
         if finmind_ready(fm, today):
             prov = dy.strip()                       # FinMind 有了才拿掉 Yahoo 暫定列（以 FinMind 為準）
             info = update(fm, today)
@@ -347,6 +369,7 @@ def main():
     lines = [f"# {today} 每日更新與建議", "",
              f"- 新交易日：{', '.join(info['new_days'])}；{info['n']} 檔中 {info['appended']} 檔接上新資料，FinMind 請求 {info['calls']} 次，耗時 {(now_tw() - t0).seconds // 60} 分鐘",
              f"- 重疊日驗證不一致而整段重抓：{', '.join(info['verify_fail']) or '無'}",
+             f"- 重疊日只有最後幾天不同、只換那幾天（FinMind 事後修正）：{', '.join(info.get('patched', [])) or '無'}",
              f"- 除權息／減資／分割而整段重抓：{', '.join(info['events']) or '無'}",
              f"- 新進池：{', '.join(info['report']) or '無'}",
              f"- 沒有到最新一天：{', '.join(info['lag']) or '無'}", ""]

@@ -217,7 +217,8 @@ def market_top(holdings, n=10):
     def name(r):
         return f"{'★' if r['代號'] in holdings else ''}{r['名稱']} {r['代號']}（{_fmt(r['收盤'], 1)}）"
 
-    for title, key, val in (("三大法人合計，依張數", "合計", "合計"), ("三大法人合計，依金額", "合計額", "合計"), ("外資，依張數", "外資", "外資"), ("投信，依張數", "投信", "投信")):
+    groups = (("三大法人合計", "合計"), ("外資（含外資自營）", "外資"), ("投信", "投信"), ("自營商（自行＋避險）", "自營"))
+    for title, key, val in [(f"{lab}，依{how}", col + suf, col) for lab, col in groups for how, suf in (("張數", ""), ("金額", "額"))]:
         buy = d.dropna(subset=[key]).nlargest(n, key); sell = d.dropna(subset=[key]).nsmallest(n, key)
         L += [f"{title}：", "", "| 名次 | 買超 | 張 | 億 | 賣超 | 張 | 億 |", "|---|---|---|---|---|---|---|"]
         for i in range(min(len(buy), len(sell))):

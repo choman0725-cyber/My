@@ -386,6 +386,7 @@ def main():
             lines += ["## 與 13:35 暫定建議比較", ""] + [f"- {k}：{'相同' if old.get(k) == v else '**不同，以這份為準**'}" for k, v in new.items()] + [""]
         try:                                       # 籌碼段（2026-11-06）：只用磁碟上的資料（融資 21:00 後才公布，22:30 run_chips.ps1 會抓當天並換掉這段）
             import chips_daily
+            chips_daily.fetch_market_inst(today)   # 公開資料免 token；還沒公布就用最近一天，22:30 再補
             lines += chips_daily.text(today) + [""]
         except Exception as e:  # noqa: BLE001
             lines += [f"（籌碼段產生失敗：{e}）", ""]

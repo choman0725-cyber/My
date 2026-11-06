@@ -10,6 +10,7 @@
   TaiwanStockMarginPurchaseShortSale/<sid>.csv        個股融資券
   TaiwanStockInstitutionalInvestorsBuySell/<sid>.csv  個股三大法人
   chips_table/<日期>.csv                              當天個股籌碼表（報表同內容）
+  market_inst/<日期>.csv                              全市場（上市＋上櫃）每檔三大法人買賣超與收盤，證交所 T86／MI_INDEX、櫃買 dailyTrade／otc，免 token
 FinMind 一次查全市場要贊助會員，所以逐檔抓：每天約 3 ＋ 2 × 檔數（約 50 檔 → 100 次）。
 融資餘額證交所約 21:00 後才公布，所以 16:00 的 daily_update 只用磁碟上的資料印表（融資會是前一天），
 Windows 排程 22:30 run_chips.ps1 跑 --update --report 補當天並把報告裡的籌碼段換掉。
@@ -144,8 +145,87 @@ def update(token, today=None, ids=None):
     stale = [s for s in BLUE_IDS if _last_date(ROOT / "data" / "universe" / "prices" / f"{s}.csv") != _last_date(ROOT / "data" / "TAIEX.csv")]
     if stale:
         subprocess.run([sys.executable, "update_universe_finmind.py", "--only", *stale, "--skip-taiex"], cwd=ROOT, check=True)
+    fetch_market_inst(today)
     print(f"籌碼更新：FinMind 請求 {fm.calls} 次；{len(log)} 個檔有新日子；重抓 {', '.join(stale) or '無'}", flush=True)
     return dict(calls=fm.calls, log=log)
+
+
+# ---------------------------------------------------------------- 全市場三大法人（證交所＋櫃買）
+def _num(x):
+    try:
+        return float(str(x).replace(",", "").strip())
+    except ValueError:
+        return np.nan
+
+
+def _web(url, params):
+    r = requests.get(url, params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch_market_inst(day):
+    """抓某天全市場每檔三大法人 → data/extra/market_inst/<日期>.csv（股）。已有檔就跳過；當天還沒公布回傳 None，不寫半套。"""
+    path = EXTRA / "market_inst" / f"{day}.csv"
+    if path.exists():
+        return path
+    ymd, slash = day.replace("-", ""), day.replace("-", "/")
+    try:
+        t86 = _web("https://www.twse.com.tw/rwd/zh/fund/T86", {"date": ymd, "selectType": "ALLBUT0999", "response": "json"})
+        time.sleep(3)
+        mi = _web("https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX", {"date": ymd, "type": "ALLBUT0999", "response": "json"})
+        ti = _web("https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade", {"type": "Daily", "sect": "EW", "date": slash, "response": "json"})
+        to = _web("https://www.tpex.org.tw/www/zh-tw/afterTrading/otc", {"date": slash, "type": "EW", "response": "json"})
+    except (requests.RequestException, ValueError) as e:
+        print(f"全市場三大法人抓不到（{e}）", flush=True)
+        return None
+    if t86.get("stat") != "OK" or not t86.get("data") or not ti.get("tables") or not ti["tables"][0].get("data"):
+        print(f"全市場三大法人 {day} 還沒公布", flush=True)
+        return None
+    px = {}
+    for t in mi.get("tables", []):
+        if "收盤價" in t.get("fields", []):
+            k = t["fields"].index("收盤價")
+            px.update({r[0].strip(): _num(r[k]) for r in t["data"]})
+    for t in to.get("tables", []):
+        px.update({r[0].strip(): _num(r[2]) for r in t.get("data", [])})
+    rows = []
+    for r in t86["data"]:                  # 欄位：4 外資不含自營、7 外資自營、10 投信、11 自營合計、18 三大合計
+        sid = r[0].strip()
+        rows.append(dict(代號=sid, 名稱=r[1].strip(), 市場="上市", 收盤=px.get(sid, np.nan), 外資=_num(r[4]) + _num(r[7]), 投信=_num(r[10]), 自營=_num(r[11]), 合計=_num(r[18])))
+    for r in ti["tables"][0]["data"]:      # 欄位：10 外資含自營、13 投信、22 自營合計、23 三大合計
+        sid = r[0].strip()
+        rows.append(dict(代號=sid, 名稱=r[1].strip(), 市場="上櫃", 收盤=px.get(sid, np.nan), 外資=_num(r[10]), 投信=_num(r[13]), 自營=_num(r[22]), 合計=_num(r[23])))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    return path
+
+
+def market_top(holdings, n=10):
+    """全市場買賣超前 n 名：只算一般股票（4 碼、不以 0 開頭，排除 ETF、特別股、權證）。"""
+    fs = sorted((EXTRA / "market_inst").glob("*.csv"))
+    if not fs:
+        return []
+    d = pd.read_csv(fs[-1], dtype={"代號": str})
+    tot = len(d)
+    d = d[d["代號"].str.fullmatch(r"[1-9]\d{3}")].copy()
+    for c in ("外資", "投信", "自營", "合計"):
+        d[f"{c}額"] = d[c] * d["收盤"] / 1e8
+        d[c] = d[c] / 1000
+    L = [f"**全市場三大法人買賣超前 {n} 名（{fs[-1].stem}；上市＋上櫃 {len(d)} 檔一般股票，全部 {tot} 檔已排除 ETF 等；張；金額＝張數×收盤估算，單位億；★＝持有）**", ""]
+
+    def name(r):
+        return f"{'★' if r['代號'] in holdings else ''}{r['名稱']} {r['代號']}（{_fmt(r['收盤'], 1)}）"
+
+    for title, key, val in (("三大法人合計，依張數", "合計", "合計"), ("三大法人合計，依金額", "合計額", "合計"), ("外資，依張數", "外資", "外資"), ("投信，依張數", "投信", "投信")):
+        buy = d.dropna(subset=[key]).nlargest(n, key); sell = d.dropna(subset=[key]).nsmallest(n, key)
+        L += [f"{title}：", "", "| 名次 | 買超 | 張 | 億 | 賣超 | 張 | 億 |", "|---|---|---|---|---|---|---|"]
+        for i in range(min(len(buy), len(sell))):
+            a, b = buy.iloc[i], sell.iloc[i]
+            L.append(f"| {i + 1} | {name(a)} | {_fmt(a[val], 0, sign=True)} | {_fmt(a[f'{val}額'], 1, sign=True)} | {name(b)} | {_fmt(b[val], 0, sign=True)} | {_fmt(b[f'{val}額'], 1, sign=True)} |")
+        L.append("")
+    L += [f"全部股票逐檔明細：data/extra/market_inst/{fs[-1].stem}.csv", ""]
+    return L
 
 
 # ---------------------------------------------------------------- 報表
@@ -373,6 +453,10 @@ def text(today=None):
         b, _ = market_inst(); L += b
     except Exception as e:  # noqa: BLE001
         L += [f"（全市場三大法人讀不到：{e}）", ""]
+    try:
+        L += market_top(holdings)
+    except Exception as e:  # noqa: BLE001
+        L += [f"（全市場買賣超排名讀不到：{e}）", ""]
     t, d_inst, d_mg = stock_table(ids, names, holdings)
     (EXTRA / "chips_table").mkdir(parents=True, exist_ok=True)
     t.to_csv(EXTRA / "chips_table" / f"{today}.csv", index=False, encoding="utf-8-sig", lineterminator="\n")

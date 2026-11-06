@@ -393,8 +393,13 @@ def stock_table(ids, names, holdings):
             r["外資(張)"] = fo.iloc[-1]; r["投信(張)"] = it.iloc[-1]; r["自營(張)"] = de.iloc[-1]; r["三大合計(張)"] = tot.iloc[-1]
             r["外資5日(張)"] = fo.iloc[-5:].sum(); r["投信5日(張)"] = it.iloc[-5:].sum(); r["合計20日(張)"] = tot.iloc[-20:].sum()
             r["外資連續"] = _streak(fo); r["投信連續"] = _streak(it)
+        r["_last"] = max([x for x in (bal.index[-1] if pm.exists() else None, piv.index[-1] if pi.exists() else None) if x is not None], default=pd.NaT)
         rows.append(r)
     t = pd.DataFrame(rows)
+    if t["_last"].notna().any():   # 股票池含已下市股（回測要用），它們的最後一筆停在當年，不能當今天的籌碼列出
+        cut = t["_last"].max() - pd.Timedelta(days=30)
+        t = t[(t["_last"] >= cut) | (t["持有"] == "★")]
+    t = t.drop(columns="_last")
     if "三大合計(張)" in t:
         t = t.sort_values("三大合計(張)", ascending=False)
     return t.reset_index(drop=True), d_inst, d_mg

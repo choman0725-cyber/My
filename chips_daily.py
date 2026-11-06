@@ -4,7 +4,7 @@
 背景：MARKET_BOTTOM_STUDY.md 的大盤落底規則用到全市場融資（20 日均 ÷ 240 日均 ≤ −8% 或離一年高點 ≤ −30%）；資料原本只抓到 2026-10-30。
 
 資料：data/extra/<dataset>/<代號 或 ALL>.csv，與 fetch_bottom_extra.py 同格式，每天接著增量（逐日原始列就是「詳盡記錄」）。
-  TaiwanStockTotalMarginPurchaseShortSale/ALL.csv   全市場融資券（張與金額）
+  TaiwanStockTotalMarginPurchaseShortSale/ALL.csv   全市場融資券（融資有張數與金額，融券只有張數；張數欄單位是張）
   TaiwanStockTotalInstitutionalInvestors/ALL.csv     全市場三大法人買賣金額
   TaiwanStockPrice/TAIEX.csv                          加權指數成交金額（落底規則的放量條件）
   TaiwanStockMarginPurchaseShortSale/<sid>.csv        個股融資券
@@ -171,7 +171,7 @@ def market_margin():
         if len(money) > k:
             prev = money.iloc[-1 - k]
             rows.append(f"| 較 {lab}前 | {_fmt(m - prev, 1, sign=True)} 億 | {_fmt((m / prev - 1) * 100, 2, pct=True, sign=True)} | {_fmt(prev, 0)} 億（{money.index[-1 - k]:%m-%d}） |")
-    L = [f"**全市場融資餘額（{d:%Y-%m-%d}）：{_fmt(m, 0)} 億元、{_fmt(lots.iloc[-1], 0)} 萬張**（融券 {_fmt(short.iloc[-1] / 10, 1)} 萬張）", "",
+    L = [f"**全市場融資餘額（{d:%Y-%m-%d}）：{_fmt(m, 0)} 億元、{_fmt(lots.iloc[-1] / 10, 1)} 萬張**", "",
          "| 比較 | 增減金額 | 增減 | 基準 |", "|---|---|---|---|"] + rows + [
          f"| 離一年最高 | {_fmt(m - hi, 1, sign=True)} 億 | {_fmt((m / hi - 1) * 100, 1, pct=True, sign=True)} | {_fmt(hi, 0)} 億（{hi_d:%Y-%m-%d}） |",
          f"| 20 日均 ÷ 240 日均 | | {_fmt((ma20 / ma240 - 1) * 100, 1, pct=True, sign=True)} | 落底規則門檻 ≤ −8%（或離高 ≤ −30%） |", ""]
@@ -180,6 +180,22 @@ def market_margin():
         if len(money) + i - 1 < 0:
             continue
         L.append(f"| {money.index[i]:%m-%d} | {_fmt(money.iloc[i], 0)} | {_fmt(money.iloc[i] - money.iloc[i - 1], 1, sign=True)} | {_fmt((money.iloc[i] / money.iloc[i - 1] - 1) * 100, 2, pct=True, sign=True)} |")
+    L.append("")
+    # 融券：全市場只有張數，沒有金額
+    sb = short.iloc[-1]
+    L += [f"**全市場融券餘額（{short.index[-1]:%Y-%m-%d}）：{_fmt(sb / 10, 1)} 萬張**，券資比 {_fmt(sb / lots.iloc[-1] * 100, 2, pct=True)}（融券張數 ÷ 融資張數）", "",
+          "| 比較 | 增減張數 | 增減 | 基準 |", "|---|---|---|---|"]
+    for k, lab in ((1, "1 日"), (5, "5 日"), (20, "20 日"), (60, "60 日")):
+        if len(short) > k:
+            prev = short.iloc[-1 - k]
+            L.append(f"| 較 {lab}前 | {_fmt((sb - prev) * 1000, 0, sign=True)} 張 | {_fmt((sb / prev - 1) * 100, 2, pct=True, sign=True)} | {_fmt(prev * 1000, 0)} 張（{short.index[-1 - k]:%m-%d}） |")
+    shi = short.iloc[-250:].max(); shi_d = short.iloc[-250:].idxmax()
+    L += [f"| 離一年最高 | {_fmt((sb - shi) * 1000, 0, sign=True)} 張 | {_fmt((sb / shi - 1) * 100, 1, pct=True, sign=True)} | {_fmt(shi * 1000, 0)} 張（{shi_d:%Y-%m-%d}） |", "",
+          "| 日期 | 融券餘額（張） | 日增減（張） | 日增減 |", "|---|---|---|---|"]
+    for i in range(-10, 0):
+        if len(short) + i - 1 < 0:
+            continue
+        L.append(f"| {short.index[i]:%m-%d} | {_fmt(short.iloc[i] * 1000, 0)} | {_fmt((short.iloc[i] - short.iloc[i - 1]) * 1000, 0, sign=True)} | {_fmt((short.iloc[i] / short.iloc[i - 1] - 1) * 100, 2, pct=True, sign=True)} |")
     L.append("")
     return L, d
 
@@ -277,7 +293,11 @@ def stock_table(ids, names, holdings):
             r["融資20日%"] = (bal.iloc[-1] / bal.iloc[-21] - 1) * 100 if len(bal) > 20 and bal.iloc[-21] > 0 else np.nan
             hi = bal.iloc[-250:].max()
             r["融資離一年高%"] = (bal.iloc[-1] / hi - 1) * 100 if hi > 0 else np.nan
-            r["融券餘額(張)"] = float(m["ShortSaleTodayBalance"].iloc[-1])
+            sh = m["ShortSaleTodayBalance"].astype(float)
+            r["融券餘額(張)"] = sh.iloc[-1]
+            r["融券日增減(張)"] = sh.iloc[-1] - sh.iloc[-2] if len(sh) > 1 else np.nan
+            r["融券20日%"] = (sh.iloc[-1] / sh.iloc[-21] - 1) * 100 if len(sh) > 20 and sh.iloc[-21] > 0 else np.nan
+            r["券資比%"] = sh.iloc[-1] / bal.iloc[-1] * 100 if bal.iloc[-1] > 0 else np.nan
         if pi.exists():
             x = pd.read_csv(pi, parse_dates=["date"])
             x["net"] = (x["buy"].astype(float) - x["sell"].astype(float)) / 1000
@@ -301,6 +321,7 @@ def stock_table(ids, names, holdings):
 
 def _table_md(t):
     cols = ["持有", "代號", "名稱", "收盤", "融資餘額(張)", "融資日增減(張)", "融資5日%", "融資20日%", "融資離一年高%",
+            "融券餘額(張)", "融券日增減(張)", "融券20日%", "券資比%",
             "外資(張)", "投信(張)", "自營(張)", "三大合計(張)", "外資5日(張)", "投信5日(張)", "合計20日(張)", "外資連續", "投信連續"]
     cols = [c for c in cols if c in t.columns]
     L = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
@@ -315,9 +336,9 @@ def _table_md(t):
             elif c == "收盤":
                 cells.append(_fmt(v, 1))
             elif c.endswith("%"):
-                cells.append(_fmt(v, 1, sign=True))
+                cells.append(_fmt(v, 1, sign=c != "券資比%"))
             else:
-                cells.append(_fmt(v, 0, sign=c != "融資餘額(張)"))
+                cells.append(_fmt(v, 0, sign=c not in ("融資餘額(張)", "融券餘額(張)")))
         L.append("| " + " | ".join(cells) + " |")
     return L
 
@@ -342,7 +363,7 @@ def text(today=None):
     names = pd.read_csv(ROOT / "data" / "universe" / "constituents.csv", dtype=str).drop_duplicates("stock_id").set_index("stock_id")["name"].to_dict()
     holdings = _holdings()
     ids = sorted({p.stem for p in (EXTRA / "TaiwanStockInstitutionalInvestorsBuySell").glob("*.csv")} | holdings)
-    L = [MARK_S, "## 籌碼（融資餘額、三大法人）", ""]
+    L = [MARK_S, "## 籌碼（融資、融券、三大法人）", ""]
     try:
         a, _ = market_margin(); L += a
     except Exception as e:  # noqa: BLE001

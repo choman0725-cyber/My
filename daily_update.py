@@ -384,6 +384,11 @@ def main():
         if prov and pre.exists():
             old, new = actions(pre.read_text(encoding="utf-8")), actions("\n".join(lines))
             lines += ["## 與 13:35 暫定建議比較", ""] + [f"- {k}：{'相同' if old.get(k) == v else '**不同，以這份為準**'}" for k, v in new.items()] + [""]
+        try:                                       # 籌碼段（2026-11-06）：只用磁碟上的資料（融資 21:00 後才公布，22:30 run_chips.ps1 會抓當天並換掉這段）
+            import chips_daily
+            lines += chips_daily.text(today) + [""]
+        except Exception as e:  # noqa: BLE001
+            lines += [f"（籌碼段產生失敗：{e}）", ""]
     rep.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
     print(f"\n已存：{rep}")

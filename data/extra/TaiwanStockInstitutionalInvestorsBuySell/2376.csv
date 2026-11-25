@@ -15782,3 +15782,8 @@ date,stock_id,buy,name,sell
 2026-11-24,2376,0,Foreign_Dealer_Self,0
 2026-11-24,2376,603000,Foreign_Investor,1694904
 2026-11-24,2376,0,Investment_Trust,882000
+2026-11-25,2376,317661,Dealer_Hedging,192957
+2026-11-25,2376,136196,Dealer_self,86182
+2026-11-25,2376,0,Foreign_Dealer_Self,0
+2026-11-25,2376,7443779,Foreign_Investor,6474828
+2026-11-25,2376,39000,Investment_Trust,1034099

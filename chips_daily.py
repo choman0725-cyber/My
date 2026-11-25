@@ -29,6 +29,17 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+
+def _to_csv(df, path, **kw):
+    """寫檔偶爾會被別的程式（防毒／同步／索引）短暫佔住而 Errno 22／13（2026-11-10、11-25 都遇過）：等一下再試，最多 6 次。"""
+    for i in range(6):
+        try:
+            return df.to_csv(path, **kw)
+        except OSError:
+            if i == 5:
+                raise
+            time.sleep(1 + i)
+
 import numpy as np
 import pandas as pd
 import requests
@@ -96,7 +107,7 @@ def _merge(path, new, keys):
     out = pd.concat([old.reindex(columns=cols), new.reindex(columns=cols)], ignore_index=True)
     out = out.drop_duplicates(keys, keep="last").sort_values(keys).reset_index(drop=True)
     path.parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(path, index=False, lineterminator="\n")
+    _to_csv(out, path, index=False, lineterminator="\n")
     return len(set(new["date"]) - set(old["date"]))
 
 
@@ -197,7 +208,7 @@ def fetch_market_inst(day):
         sid = r[0].strip()
         rows.append(dict(代號=sid, 名稱=r[1].strip(), 市場="上櫃", 收盤=px.get(sid, np.nan), 外資=_num(r[10]), 投信=_num(r[13]), 自營=_num(r[22]), 合計=_num(r[23])))
     path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    _to_csv(pd.DataFrame(rows), path, index=False, encoding="utf-8-sig", lineterminator="\n")
     return path
 
 
@@ -465,7 +476,7 @@ def text(today=None):
         L += [f"（全市場買賣超排名讀不到：{e}）", ""]
     t, d_inst, d_mg = stock_table(ids, names, holdings)
     (EXTRA / "chips_table").mkdir(parents=True, exist_ok=True)
-    t.to_csv(EXTRA / "chips_table" / f"{today}.csv", index=False, encoding="utf-8-sig", lineterminator="\n")
+    _to_csv(t, EXTRA / "chips_table" / f"{today}.csv", index=False, encoding="utf-8-sig", lineterminator="\n")
     L += [f"**個股籌碼（股票池 ∪ 持股；法人到 {d_inst.date() if d_inst is not None else '—'}、融資到 {d_mg.date() if d_mg is not None else '—'}；單位張；依三大法人當日合計排序；★＝持有）**", ""]
     L += _table_md(t)
     L += ["", f"逐日原始資料：data/extra/TaiwanStockMarginPurchaseShortSale/、TaiwanStockInstitutionalInvestorsBuySell/（每檔一個 csv）；當天表：data/extra/chips_table/{today}.csv", MARK_E]
